@@ -64,6 +64,11 @@ impl CpuTimeTracker {
         self.per_pid_counters.get(&pid).map_or(0, |counter| counter.get_ns())
     }
     
+    /// Get PID counter without creating it
+    pub fn get_pid_counter(&self, pid: u32) -> Option<&CpuTimeCounter> {
+        self.per_pid_counters.get(&pid)
+    }
+    
     /// Get current total CPU time
     pub fn get_total_cpu_time(&self) -> u64 {
         self.total_counter.get_ns()

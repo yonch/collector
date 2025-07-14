@@ -10,11 +10,13 @@ mod cpu_time_counter;
 mod cpu_time_tracker;
 mod hyperthread_analysis;
 mod monotonicity_analysis;
+mod off_cpu_analysis;
 
 use analyzer::Analyzer;
 use concurrency_analysis::ConcurrencyAnalysis;
 use hyperthread_analysis::HyperthreadAnalysis;
 use monotonicity_analysis::MonotonicityAnalysis;
+use off_cpu_analysis::OffCpuAnalysis;
 
 #[derive(Parser)]
 #[command(name = "trace-analysis")]
@@ -31,7 +33,7 @@ struct Cli {
 
     #[arg(
         long,
-        help = "Analysis type to run: 'concurrency', 'hyperthread', or 'monotonicity'",
+        help = "Analysis type to run: 'concurrency', 'hyperthread', 'monotonicity', or 'off-cpu'",
         default_value = "hyperthread"
     )]
     analysis_type: String,
@@ -114,9 +116,29 @@ fn main() -> Result<()> {
             // Process the Parquet file
             analyzer.process_parquet_file(builder, analysis)?;
         }
+        "off-cpu" => {
+            // Create off-CPU analysis module
+            let mut analysis = OffCpuAnalysis::new(num_cpus)?;
+            
+            // Set CSV output paths for all four metrics
+            let per_cpu_off_time_csv = determine_csv_output_filename(&cli.filename, cli.output_prefix.as_deref(), "per_cpu_off_time")?;
+            let global_off_time_csv = determine_csv_output_filename(&cli.filename, cli.output_prefix.as_deref(), "global_off_time")?;
+            let per_cpu_other_cpu_time_csv = determine_csv_output_filename(&cli.filename, cli.output_prefix.as_deref(), "per_cpu_other_cpu_time")?;
+            let global_other_cpu_time_csv = determine_csv_output_filename(&cli.filename, cli.output_prefix.as_deref(), "global_other_cpu_time")?;
+            
+            analysis.set_csv_paths(
+                per_cpu_off_time_csv.to_string_lossy().to_string(),
+                global_off_time_csv.to_string_lossy().to_string(),
+                per_cpu_other_cpu_time_csv.to_string_lossy().to_string(),
+                global_other_cpu_time_csv.to_string_lossy().to_string(),
+            );
+
+            // Process the Parquet file
+            analyzer.process_parquet_file(builder, analysis)?;
+        }
         _ => {
             return Err(anyhow::anyhow!(
-                "Invalid analysis type: {}. Must be 'concurrency', 'hyperthread', or 'monotonicity'",
+                "Invalid analysis type: {}. Must be 'concurrency', 'hyperthread', 'monotonicity', or 'off-cpu'",
                 cli.analysis_type
             ));
         }
