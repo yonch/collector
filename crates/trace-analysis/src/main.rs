@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 mod analyzer;
 mod concurrency_analysis;
+mod cpu_time_counter;
+mod cpu_time_tracker;
 mod hyperthread_analysis;
 mod monotonicity_analysis;
 

@@ -8,6 +8,7 @@ use std::io::Write;
 use tqdm::tqdm;
 
 use crate::analyzer::Analysis;
+use crate::cpu_time_tracker::CpuTimeTracker;
 
 /// Binned statistics for concurrency and CPI analysis
 #[derive(Debug, Clone)]
@@ -71,74 +72,19 @@ impl ConcurrencyCpiStatistics {
     }
 }
 
-/// CPU time counter for tracking aggregate CPU time and thread counts
-#[derive(Debug, Clone)]
-pub struct CpuTimeCounter {
-    aggregate_cpu_time: u64,
-    last_update_timestamp: u64,
-    pub current_thread_count: u32,
-}
-
-impl CpuTimeCounter {
-    /// Create a new CPU time counter
-    pub fn new() -> Self {
-        Self {
-            aggregate_cpu_time: 0,
-            last_update_timestamp: 0,
-            current_thread_count: 0,
-        }
-    }
-
-    /// Increment the current thread count
-    pub fn increase(&mut self) {
-        self.current_thread_count += 1;
-    }
-
-    /// Decrement the current thread count
-    pub fn decrease(&mut self) {
-        if self.current_thread_count == 0 {
-            panic!("Current thread count is 0");
-        }
-        self.current_thread_count -= 1;
-    }
-
-    /// Update aggregate CPU time with elapsed time since last update
-    pub fn update(&mut self, timestamp: u64) {
-        if self.last_update_timestamp > 0 {
-            if timestamp < self.last_update_timestamp {
-                panic!(
-                    "Timestamp regression detected: {} < {}",
-                    timestamp, self.last_update_timestamp
-                );
-            }
-            let elapsed_time = timestamp - self.last_update_timestamp;
-            self.aggregate_cpu_time += elapsed_time * (self.current_thread_count as u64);
-        }
-        self.last_update_timestamp = timestamp;
-    }
-
-    /// Get current aggregate CPU time in nanoseconds
-    pub fn get_ns(&self) -> u64 {
-        self.aggregate_cpu_time
-    }
-}
 
 /// Per-CPU state for storing aggregate CPU time readings
 #[derive(Debug)]
 struct PerCpuState {
-    last_timestamp: u64,
     start_total_cpu_time: u64,
     start_same_process_cpu_time: u64,
-    context_switch_count: u64,
 }
 
 impl PerCpuState {
     fn new() -> Self {
         Self {
-            last_timestamp: 0,
             start_total_cpu_time: 0,
             start_same_process_cpu_time: 0,
-            context_switch_count: 0,
         }
     }
 }
@@ -147,9 +93,8 @@ impl PerCpuState {
 pub struct ConcurrencyAnalysis {
     num_cpus: usize,
 
-    // State tracking
-    per_pid_counters: HashMap<u32, CpuTimeCounter>,
-    total_counter: CpuTimeCounter,
+    // State tracking (shared with off-CPU analysis)
+    cpu_time_tracker: CpuTimeTracker,
     per_cpu_state: Vec<PerCpuState>,
     
     // Statistics tracking
@@ -166,8 +111,7 @@ impl ConcurrencyAnalysis {
     pub fn new(num_cpus: usize) -> Result<Self> {
         Ok(Self {
             num_cpus,
-            per_pid_counters: HashMap::new(),
-            total_counter: CpuTimeCounter::new(),
+            cpu_time_tracker: CpuTimeTracker::new(num_cpus),
             per_cpu_state: (0..num_cpus).map(|_| PerCpuState::new()).collect(),
             per_process_total_stats: HashMap::new(),
             per_process_same_process_stats: HashMap::new(),
@@ -182,10 +126,6 @@ impl ConcurrencyAnalysis {
         self.same_process_csv_path = Some(same_process_path);
     }
 
-    /// Check if a process ID represents a kernel thread
-    fn is_kernel(pid: u32) -> bool {
-        pid == 0
-    }
 
     /// Process a single event
     fn process_event(
@@ -196,58 +136,31 @@ impl ConcurrencyAnalysis {
         is_context_switch: bool,
         next_tgid: Option<u32>,
     ) -> Result<(f64, f64)> {
-        // Get or create current PID counter entry
-        let current_pid_counter = self
-            .per_pid_counters
-            .entry(pid)
-            .or_insert_with(CpuTimeCounter::new);
+        if cpu_id >= self.num_cpus {
+            return Err(anyhow::anyhow!("Invalid CPU ID: {}", cpu_id));
+        }
 
         // Get current aggregate readings before updates
         let start_total_cpu_time = self.per_cpu_state[cpu_id].start_total_cpu_time;
         let start_same_process_cpu_time = self.per_cpu_state[cpu_id].start_same_process_cpu_time;
-        let last_cpu_timestamp = self.per_cpu_state[cpu_id].last_timestamp;
+        let last_cpu_timestamp = self.cpu_time_tracker.get_per_cpu_state(cpu_id).last_timestamp;
 
-        // Update counters to current timestamp
-        self.total_counter.update(timestamp);
-        current_pid_counter.update(timestamp);
+        // Update CPU time tracker
+        if is_context_switch {
+            let next_pid = next_tgid.expect("next_tgid should always be present on context switches");
+            self.cpu_time_tracker.process_context_switch(
+                timestamp,
+                cpu_id,
+                pid,
+                next_pid,
+            )?;
+        } else {
+            self.cpu_time_tracker.process_timer_event(timestamp, pid, cpu_id)?;
+        }
 
         // Get current aggregate readings after updates
-        let end_total_cpu_time = self.total_counter.get_ns();
-        let end_same_process_cpu_time = current_pid_counter.get_ns();
-
-        // Handle context switches - only increment/decrement counters on context switches
-        if is_context_switch {
-            let next_pid =
-                next_tgid.expect("next_tgid should always be present on context switches");
-
-            // Identify kernel threads for counter management
-            let is_kernel = Self::is_kernel(pid);
-            let context_switch_count = self.per_cpu_state[cpu_id].context_switch_count;
-
-            // Only decrease counters if we've seen a context switch before on this CPU
-            if context_switch_count > 0 {
-                // Decrease counter for outgoing process
-                current_pid_counter.decrease();
-                if !is_kernel {
-                    self.total_counter.decrease();
-                }
-            }
-
-            // Update next PID counter to timestamp before increasing it
-            let next_is_kernel = Self::is_kernel(next_pid);
-            let next_pid_counter = self
-                .per_pid_counters
-                .entry(next_pid)
-                .or_insert_with(CpuTimeCounter::new);
-            next_pid_counter.update(timestamp);
-            next_pid_counter.increase();
-            if !next_is_kernel {
-                self.total_counter.increase();
-            }
-
-            // Increment context switch count for this CPU
-            self.per_cpu_state[cpu_id].context_switch_count += 1;
-        }
+        let end_total_cpu_time = self.cpu_time_tracker.get_total_cpu_time();
+        let end_same_process_cpu_time = self.cpu_time_tracker.get_pid_cpu_time(pid);
 
         // Calculate average concurrent threads only if we have a previous timestamp
         let time_interval = if last_cpu_timestamp > 0 {
@@ -269,10 +182,7 @@ impl ConcurrencyAnalysis {
         };
 
         let next_tgid_same_process_cpu_time = if let Some(next_tgid) = next_tgid {
-            self.per_pid_counters
-                .get(&next_tgid)
-                .expect("on context switch, we add a counter for next_tgid if it doesn't exist)")
-                .get_ns()
+            self.cpu_time_tracker.get_pid_cpu_time(next_tgid)
         } else {
             end_same_process_cpu_time
         };
@@ -280,7 +190,6 @@ impl ConcurrencyAnalysis {
         // Update per-CPU state for next interval
         self.per_cpu_state[cpu_id].start_total_cpu_time = end_total_cpu_time;
         self.per_cpu_state[cpu_id].start_same_process_cpu_time = next_tgid_same_process_cpu_time;
-        self.per_cpu_state[cpu_id].last_timestamp = timestamp;
 
         // Return computed concurrency metrics
         Ok((avg_total_threads, avg_same_process_threads))
