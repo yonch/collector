@@ -370,16 +370,16 @@ impl Analysis for OffCpuAnalysis {
                 // Get or create statistics for this process name
                 // Using 100 microsecond bins (1e5 ns = 100μs bin width), capped at 4ms (4e6 ns)
                 let per_cpu_off_time_stats = self.per_process_per_cpu_off_time_stats.entry(process_name_key.clone()).or_insert_with(|| {
-                    OffCpuCpiStatistics::new(1e5, 0.2, 4.0, 4e6) // 100μs bins, 0.2 CPI bins, max CPI 4.0, max measurement 4ms
+                    OffCpuCpiStatistics::new(5e3, 0.2, 4.0, 2e5) // 5μs bins, 0.2 CPI bins, max CPI 4.0, max measurement 200μs
                 });
                 let global_off_time_stats = self.per_process_global_off_time_stats.entry(process_name_key.clone()).or_insert_with(|| {
-                    OffCpuCpiStatistics::new(1e5, 0.2, 4.0, 4e6)
+                    OffCpuCpiStatistics::new(5e3, 0.2, 4.0, 2e5)
                 });
                 let per_cpu_other_cpu_time_stats = self.per_process_per_cpu_other_cpu_time_stats.entry(process_name_key.clone()).or_insert_with(|| {
-                    OffCpuCpiStatistics::new(1e5, 0.2, 4.0, 4e6) // 100μs bins for CPU time, capped at 4ms
+                    OffCpuCpiStatistics::new(2e5, 0.2, 4.0, 1e7) // 200μs bins for CPU time, capped at 10ms
                 });
                 let global_other_cpu_time_stats = self.per_process_global_other_cpu_time_stats.entry(process_name_key).or_insert_with(|| {
-                    OffCpuCpiStatistics::new(1e5, 0.2, 4.0, 4e6)
+                    OffCpuCpiStatistics::new(2e5, 0.2, 4.0, 1e7)
                 });
                 
                 // Add measurements to statistics only when there's a scheduling gap (non-zero off-CPU times)
