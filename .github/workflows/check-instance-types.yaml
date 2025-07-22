@@ -1,0 +1,142 @@
+name: Check Instance Types for Hardware Events
+on: 
+  workflow_dispatch:  # Manual trigger
+
+# Add permissions needed for OIDC authentication
+permissions:
+  id-token: write # Required for requesting the JWT
+
+jobs:
+  test-instance-types:
+    name: Test ${{ matrix.instance-type }}
+    strategy:
+      fail-fast: false
+      max-parallel: 5  # Limit concurrency to avoid overwhelming AWS
+      matrix:
+        instance-type: 
+          - c5.4xlarge
+          - c5a.4xlarge
+          - c5d.4xlarge
+          - c5n.4xlarge
+          - c6a.4xlarge
+          - c6gd.4xlarge
+          - c6gn.4xlarge
+          - c7g.4xlarge
+          - c7gd.4xlarge
+          - c7gn.4xlarge
+          - c8g.4xlarge
+          - g4ad.4xlarge
+          - g4dn.4xlarge
+          - g6.4xlarge
+          - m4.4xlarge
+          - m5.4xlarge
+          - m5a.4xlarge
+          - m5ad.4xlarge
+          - m5d.4xlarge
+          - m5n.4xlarge
+          - m6a.4xlarge
+          - m6gd.4xlarge
+          - m6i.4xlarge
+          - m7gd.4xlarge
+          - m8g.4xlarge
+          - r4.4xlarge
+          - r5.4xlarge
+          - r5a.4xlarge
+          - r5b.4xlarge
+          - r5d.4xlarge
+          - r6a.4xlarge
+          - r6i.4xlarge
+          - r8g.4xlarge
+    
+    uses: ./.github/workflows/check-instance-type-template.yaml
+    with:
+      instance-type: ${{ matrix.instance-type }}
+    secrets:
+      REPO_ADMIN_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+      AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  generate-summary:
+    name: Generate Summary Report
+    needs: [test-instance-types]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results
+          pattern: 'perf-output-*'
+          
+      - name: Generate consolidated CSV report
+        run: |
+          # Create header for CSV
+          echo "Instance Type,Hardware Cycles Support,Timestamp" > hardware_support_summary.csv
+          
+          # Combine all individual CSV files
+          find results -name "result_*.csv" -type f | while read file; do
+            if [ -f "$file" ]; then
+              cat "$file" >> hardware_support_summary.csv
+            fi
+          done
+          
+          # Sort by instance type if we have data
+          if [ -s hardware_support_summary.csv ] && [ $(wc -l < hardware_support_summary.csv) -gt 1 ]; then
+            (head -n 1 hardware_support_summary.csv && tail -n +2 hardware_support_summary.csv | sort) > temp_summary.csv
+            mv temp_summary.csv hardware_support_summary.csv
+          fi
+          
+          echo "=== Hardware Support Summary ==="
+          cat hardware_support_summary.csv
+          
+          # Generate markdown summary
+          echo "# Hardware Events Support Summary" > summary.md
+          echo "" >> summary.md
+          echo "Generated: $(date -u)" >> summary.md
+          echo "" >> summary.md
+          
+          if [ -s hardware_support_summary.csv ] && [ $(wc -l < hardware_support_summary.csv) -gt 1 ]; then
+            echo "| Instance Type | Hardware Cycles Support | Timestamp |" >> summary.md
+            echo "|---------------|-------------------------|-----------|" >> summary.md
+            
+            # Convert CSV to markdown table (skip header)
+            tail -n +2 hardware_support_summary.csv | while IFS=',' read -r instance support timestamp; do
+              if [ "$support" = "supported" ]; then
+                echo "| $instance | ✅ Supported | $timestamp |" >> summary.md
+              else
+                echo "| $instance | ❌ Not Supported | $timestamp |" >> summary.md
+              fi
+            done
+            
+            # Count supported vs not supported
+            supported_count=$(tail -n +2 hardware_support_summary.csv | grep -c "supported" || echo "0")
+            not_supported_count=$(tail -n +2 hardware_support_summary.csv | grep -c "not_supported" || echo "0")
+            total_count=$((supported_count + not_supported_count))
+            
+            echo "" >> summary.md
+            echo "## Summary Statistics" >> summary.md
+            echo "- **Total instances tested**: $total_count" >> summary.md
+            echo "- **Supported**: $supported_count" >> summary.md
+            echo "- **Not supported**: $not_supported_count" >> summary.md
+          else
+            echo "No test results found. This may indicate that the perf tests did not complete successfully." >> summary.md
+          fi
+          
+      - name: Upload summary report
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardware-support-summary
+          path: |
+            hardware_support_summary.csv
+            summary.md
+          retention-days: 90
+          
+      - name: Display summary in job
+        run: |
+          echo "## 📊 Hardware Events Support Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f summary.md ]; then
+            cat summary.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Summary file not generated" >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,110 @@
+name: Check Single Instance Type for Hardware Events
+on:
+  workflow_call:
+    inputs:
+      instance-type:
+        description: 'EC2 instance type to test (e.g., c5.4xlarge)'
+        type: string
+        required: true
+    secrets:
+      REPO_ADMIN_TOKEN:
+        required: true
+      AWS_ROLE_ARN:
+        required: true
+      AWS_REGION:
+        required: false
+
+# Add permissions needed for OIDC authentication
+permissions:
+  id-token: write # Required for requesting the JWT
+
+jobs:
+  setup-runner:
+    name: Start EC2 runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner-label: ${{ steps.start-runner.outputs.runner-label }}
+      ec2-instance-id: ${{ steps.start-runner.outputs.ec2-instance-id }}
+      region: ${{ steps.start-runner.outputs.region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Start AWS Runner
+        id: start-runner
+        uses: ./.github/actions/aws-runner
+        with:
+          github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          instance-type: ${{ inputs.instance-type }}
+          image-type: 'ubuntu-24.04'
+          pre-runner-script: |
+            sudo yum update -y && \
+            sudo yum install docker git libicu -y
+            sudo systemctl enable docker
+
+  do-job:
+    needs: setup-runner
+    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
+    steps:
+      - name: Check perf hardware events
+        id: check-cycles
+        run: |
+          # Run perf list and capture output
+          echo "Running perf list on ${{ inputs.instance-type }}..."
+          perf_output=$(perf list 2>&1 || echo "perf list failed")
+          
+          # Check for cycles hardware event
+          if echo "$perf_output" | grep -E "(cpu-cycles|cycles).*\[Hardware event\]"; then
+            echo "✅ Hardware cycles event supported on ${{ inputs.instance-type }}"
+            cycles_support="supported"
+          else
+            echo "❌ Hardware cycles event NOT supported on ${{ inputs.instance-type }}"
+            cycles_support="not_supported"
+          fi
+          
+          # Create CSV entry and save outputs
+          timestamp=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          echo "${{ inputs.instance-type }},$cycles_support,$timestamp" > result_${{ inputs.instance-type }}.csv
+          echo "$perf_output" > perf_output_${{ inputs.instance-type }}.txt
+          
+          # Display results in job summary
+          echo "## 🔍 Perf Check Results for ${{ inputs.instance-type }}" >> $GITHUB_STEP_SUMMARY
+          if [ "$cycles_support" = "supported" ]; then
+            echo "✅ **Hardware cycles event**: Supported" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Hardware cycles event**: Not Supported" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "**Timestamp**: $timestamp" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload perf output artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-output-${{ inputs.instance-type }}
+          path: |
+            perf_output_${{ inputs.instance-type }}.txt
+            result_${{ inputs.instance-type }}.csv
+          retention-days: 30
+          
+      - name: Power off
+        run: |
+          shutdown --poweroff now
+
+  cleanup-runner:
+    name: Stop EC2 runner
+    needs: [setup-runner, do-job]
+    runs-on: ubuntu-latest
+    if: always()  # Run even if previous jobs fail
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Stop AWS Runner
+        uses: ./.github/actions/aws-runner/cleanup
+        with:
+          runner-label: ${{ needs.setup-runner.outputs.runner-label }}
+          ec2-instance-id: ${{ needs.setup-runner.outputs.ec2-instance-id }}
+          github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ needs.setup-runner.outputs.region || secrets.AWS_REGION }}
