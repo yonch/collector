@@ -64,13 +64,13 @@ jobs:
                 aarch64) RUNNER_ARCH="arm64" ;; 
                 *) RUNNER_ARCH="x64" ;; 
             esac
-            echo "Detected architecture: $$RUNNER_ARCH" | tee -a /var/log/kexec-setup.log
+            echo "Detected architecture: $RUNNER_ARCH" | tee -a /var/log/kexec-setup.log
             
             RUNNER_VERSION="2.313.0"
-            RUNNER_URL="https://github.com/actions/runner/releases/download/v$${RUNNER_VERSION}/actions-runner-linux-$${RUNNER_ARCH}-$${RUNNER_VERSION}.tar.gz"
-            echo "Downloading from: $$RUNNER_URL" | tee -a /var/log/kexec-setup.log
+            RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
+            echo "Downloading from: $RUNNER_URL" | tee -a /var/log/kexec-setup.log
             
-            if ! curl -L -o "actions-runner.tar.gz" "$$RUNNER_URL"; then
+            if ! curl -L -o "actions-runner.tar.gz" "$RUNNER_URL"; then
                 echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
