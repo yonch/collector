@@ -29,6 +29,10 @@ inputs:
     description: 'Script to run before installing the GitHub runner'
     required: false
     default: ''
+  runner-home-dir:
+    description: 'Home directory for the GitHub runner'
+    required: false
+    default: ''
   aws-resource-tags:
     description: 'Custom resource tags in JSON format'
     required: false
@@ -218,6 +222,7 @@ runs:
         market-type: ${{ inputs.market-type }}
         ec2-volume-size: ${{ inputs.volume-size }}
         pre-runner-script: ${{ inputs.pre-runner-script }}
+        runner-home-dir: ${{ inputs.runner-home-dir }}
         iam-role-name: ${{ inputs.iam-role-name }}
         availability-zones-config: ${{ steps.generate-configs.outputs.availability_zones_config }}
         aws-resource-tags: >

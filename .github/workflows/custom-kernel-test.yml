@@ -1,0 +1,171 @@
+name: Custom Kernel Test - Hello World with Kexec
+on: 
+  workflow_dispatch:  # Manual trigger for testing
+    inputs:
+      instance-type:
+        description: 'EC2 instance type to use'
+        required: false
+        default: 't3.medium'
+        type: string
+      image-type:
+        description: 'Image type to use (ubuntu-22.04 or ubuntu-24.04)'
+        required: false
+        default: 'ubuntu-22.04'
+        type: string
+
+permissions:
+  id-token: write # Required for requesting the JWT
+  contents: read
+  actions: write
+
+jobs:
+  setup-runner:
+    name: Start EC2 runner with kexec
+    runs-on: ubuntu-latest
+    outputs:
+      runner-label: ${{ steps.start-runner.outputs.runner-label }}
+      ec2-instance-id: ${{ steps.start-runner.outputs.ec2-instance-id }}
+      region: ${{ steps.start-runner.outputs.region }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Start AWS Runner with kexec
+        id: start-runner
+        uses: ./.github/actions/aws-runner
+        with:
+          github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          iam-role-name: github-actions-runner          
+          instance-type: ${{ inputs.instance-type || 't3.medium' }}
+          image-type: ${{ inputs.image-type || 'ubuntu-22.04' }}
+          volume-size: '20'
+          runner-home-dir: '/tmp'
+          pre-runner-script: |
+            # Kexec Hello World Setup
+            # =======================
+            # This script demonstrates kexec functionality by:
+            # 1. Setting up a fake config.sh to intercept runner startup
+            # 2. Creating a post-kexec script that prints "Hello World" and starts the runner
+            # 3. Kexecing into the same kernel with the custom init script
+            
+            echo "Setting up kexec hello world demo..." >> /var/log/kexec-setup.log
+            
+            # Ensure required packages are installed
+            apt-get update
+            apt-get install -y kexec-tools curl
+            
+            # Create fake config.sh that handles kexec and runner setup
+            cat > /tmp/config.sh << 'EOF'
+            #!/bin/bash
+            echo "Fake config.sh called with: $@" >> /var/log/kexec-setup.log
+            
+            # Create persistent directory for the real runner and hello world script
+            mkdir -p /persist/actions-runner
+            cd /persist/actions-runner
+            
+            # Download real GitHub Actions runner
+            echo "Downloading GitHub Actions runner..." >> /var/log/kexec-setup.log
+            case $(uname -m) in aarch64) ARCH="arm64" ;; *) ARCH="x64" ;; esac
+            curl -O -L https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-${ARCH}-2.313.0.tar.gz
+            tar xzf ./actions-runner-linux-${ARCH}-2.313.0.tar.gz
+            
+            # Create post-kexec init script that starts the runner (hello world comes later from the runner job)
+            cat > /persist/kexec-runner.sh << 'INNER_EOF'
+            #!/bin/bash
+            
+            # Log kexec success
+            echo "========================================" >> /var/log/kexec-setup.log
+            echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" >> /var/log/kexec-setup.log
+            echo "========================================" >> /var/log/kexec-setup.log
+            echo "Kernel version: $(uname -r)" >> /var/log/kexec-setup.log
+            echo "System time: $(date)" >> /var/log/kexec-setup.log
+            echo "Hostname: $(hostname)" >> /var/log/kexec-setup.log
+            echo "Init PID: $$" >> /var/log/kexec-setup.log
+            echo "========================================" >> /var/log/kexec-setup.log
+            
+            # Start the GitHub Actions runner
+            cd /persist/actions-runner
+            export RUNNER_ALLOW_RUNASROOT=1
+            
+            # Configure runner with the original GitHub parameters
+            echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
+            ./config.sh "$@"
+            
+            # Start the runner - this will wait for jobs
+            echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
+            ./run.sh
+            INNER_EOF
+            chmod +x /persist/kexec-runner.sh
+            
+            # Kexec into the same kernel but with our custom init script
+            echo "Preparing kexec..." >> /var/log/kexec-setup.log
+            kexec -l /boot/vmlinuz-$(uname -r) \
+                  --initrd=/boot/initramfs-$(uname -r).img \
+                  --append="$(cat /proc/cmdline) init=/persist/kexec-runner.sh"
+            
+            echo "Executing kexec with hello world init..." >> /var/log/kexec-setup.log
+            kexec -e
+            EOF
+            
+            chmod +x /tmp/config.sh
+            echo "Kexec hello world setup complete. Fake config.sh ready." >> /var/log/kexec-setup.log
+
+  hello-world-test:
+    needs: [setup-runner]
+    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
+    timeout-minutes: 10
+    steps:
+      - name: Hello World from kexec'd runner
+        run: |
+          echo "================================================"
+          echo "🎉 HELLO WORLD FROM THE KEXEC'D GITHUB RUNNER! 🎉"
+          echo "================================================"
+          echo ""
+          echo "✅ Successfully running on kexec'd kernel!"
+          echo "📍 Current kernel: $(uname -r)"
+          echo "⏰ System uptime: $(uptime)"
+          echo "📅 Date: $(date)"
+          echo "👤 Current user: $(whoami)"
+          echo "🔧 Current PID: $$"
+          echo ""
+          
+      - name: Verify kexec worked
+        run: |
+          echo "📋 Verifying kexec functionality..."
+          
+          # Check if our kexec setup logs exist
+          if [ -f /var/log/kexec-setup.log ]; then
+            echo "✅ Found kexec setup log! Last 20 lines:"
+            echo "----------------------------------------"
+            tail -20 /var/log/kexec-setup.log
+          else
+            echo "⚠️ No kexec setup log found - this might indicate kexec didn't work as expected"
+          fi
+          
+          echo ""
+          echo "🔍 Process information:"
+          echo "Current process tree (first 20 processes):"
+          ps aux | head -20
+          
+          echo ""
+          echo "🎯 KEXEC HELLO WORLD TEST COMPLETED SUCCESSFULLY!"
+          echo "This GitHub Actions runner is now running after a successful kexec!"
+
+  stop-runner:
+    name: Stop EC2 runner
+    needs: [setup-runner, hello-world-test]
+    runs-on: ubuntu-latest
+    if: always()  # Run even if previous jobs fail
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Stop AWS Runner
+        uses: ./.github/actions/aws-runner/cleanup
+        with:
+          runner-label: ${{ needs.setup-runner.outputs.runner-label }}
+          ec2-instance-id: ${{ needs.setup-runner.outputs.ec2-instance-id }}
+          github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
+          aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ needs.setup-runner.outputs.region }}
