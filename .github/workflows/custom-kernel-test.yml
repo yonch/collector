@@ -45,49 +45,45 @@ jobs:
             # Kexec Hello World Setup
             # =======================
             # This script demonstrates kexec functionality by:
-            # 1. Setting up a fake config.sh to intercept runner startup
-            # 2. Creating a post-kexec script that prints "Hello World" and starts the runner
-            # 3. Kexecing into the same kernel with the custom init script
+            # 1. Downloading the GitHub Actions runner
+            # 2. Creating a post-kexec script that starts the runner
+            # 3. Setting up a fake config.sh to intercept and trigger kexec
             
-            echo "Setting up kexec hello world demo..." >> /var/log/kexec-setup.log
+            echo "Setting up kexec hello world demo..." | tee -a /var/log/kexec-setup.log
             
             # Ensure required packages are installed
             apt-get update
             apt-get install -y kexec-tools curl
             
-            # Create fake config.sh that handles kexec and runner setup  
-            cat > /tmp/config.sh << EOF
-            #!/bin/bash
-            echo "Fake config.sh called with: \$@" >> /var/log/kexec-setup.log
-            
-            # Create persistent directory for the real runner and hello world script
+            # Create persistent directory and download the GitHub Actions runner
             mkdir -p /persist/actions-runner
             cd /persist/actions-runner
             
-            # Download real GitHub Actions runner
-            echo "Downloading GitHub Actions runner..." >> /var/log/kexec-setup.log
-            case \$(uname -m) in 
+            echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log
+            case $(uname -m) in 
                 aarch64) RUNNER_ARCH="arm64" ;; 
                 *) RUNNER_ARCH="x64" ;; 
             esac
-            echo "Detected architecture: \$RUNNER_ARCH" >> /var/log/kexec-setup.log
+            echo "Detected architecture: $RUNNER_ARCH" | tee -a /var/log/kexec-setup.log
             
             RUNNER_VERSION="2.313.0"
-            RUNNER_URL="https://github.com/actions/runner/releases/download/v\${RUNNER_VERSION}/actions-runner-linux-\${RUNNER_ARCH}-\${RUNNER_VERSION}.tar.gz"
-            echo "Downloading from: \$RUNNER_URL" >> /var/log/kexec-setup.log
+            RUNNER_URL="https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz"
+            echo "Downloading from: $RUNNER_URL" | tee -a /var/log/kexec-setup.log
             
-            if ! curl -L -o "actions-runner.tar.gz" "\$RUNNER_URL"; then
-                echo "Failed to download GitHub Actions runner" >> /var/log/kexec-setup.log
+            if ! curl -L -o "actions-runner.tar.gz" "$RUNNER_URL"; then
+                echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
             
             if ! tar xzf actions-runner.tar.gz; then
-                echo "Failed to extract GitHub Actions runner" >> /var/log/kexec-setup.log
+                echo "Failed to extract GitHub Actions runner" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
             
+            echo "GitHub Actions runner downloaded and extracted successfully" | tee -a /var/log/kexec-setup.log
+            
             # Create post-kexec init script that starts the runner (hello world comes later from the runner job)
-            cat > /persist/kexec-runner.sh << 'INNER_EOF'
+            cat > /persist/kexec-runner.sh << 'EOF'
             #!/bin/bash
             
             # Log kexec success
@@ -106,62 +102,85 @@ jobs:
             
             # Configure runner with the original GitHub parameters
             echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
-            ./config.sh "\$@"
+            ./config.sh "$@"
             
             # Start the runner - this will wait for jobs
             echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
             ./run.sh
-            INNER_EOF
+            EOF
             chmod +x /persist/kexec-runner.sh
             
+            echo "Post-kexec runner script created" | tee -a /var/log/kexec-setup.log
+            
+            echo "=== Contents of /persist/kexec-runner.sh ===" | tee -a /var/log/kexec-setup.log
+            cat /persist/kexec-runner.sh | tee -a /var/log/kexec-setup.log
+            echo "=== End of kexec-runner.sh ===" | tee -a /var/log/kexec-setup.log
+            
             # Find the correct kernel and initrd files
-            KERNEL_VERSION=\$(uname -r)
-            echo "Current kernel version: \$KERNEL_VERSION" >> /var/log/kexec-setup.log
+            KERNEL_VERSION=$(uname -r)
+            echo "Current kernel version: $KERNEL_VERSION" | tee -a /var/log/kexec-setup.log
             
             # Ubuntu AWS uses different naming patterns
-            if [ -f "/boot/vmlinuz-\$KERNEL_VERSION" ]; then
-                VMLINUZ="/boot/vmlinuz-\$KERNEL_VERSION"
+            if [ -f "/boot/vmlinuz-$KERNEL_VERSION" ]; then
+                VMLINUZ="/boot/vmlinuz-$KERNEL_VERSION"
             elif [ -f "/boot/vmlinuz" ]; then
                 VMLINUZ="/boot/vmlinuz"
             else
-                echo "Cannot find kernel image" >> /var/log/kexec-setup.log
-                ls -la /boot/ >> /var/log/kexec-setup.log
+                echo "Cannot find kernel image" | tee -a /var/log/kexec-setup.log
+                ls -la /boot/ | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
             
             # Find initrd - Ubuntu AWS may use different names
-            if [ -f "/boot/initrd.img-\$KERNEL_VERSION" ]; then
-                INITRD="/boot/initrd.img-\$KERNEL_VERSION"
-            elif [ -f "/boot/initramfs-\$KERNEL_VERSION.img" ]; then
-                INITRD="/boot/initramfs-\$KERNEL_VERSION.img"
+            if [ -f "/boot/initrd.img-$KERNEL_VERSION" ]; then
+                INITRD="/boot/initrd.img-$KERNEL_VERSION"
+            elif [ -f "/boot/initramfs-$KERNEL_VERSION.img" ]; then
+                INITRD="/boot/initramfs-$KERNEL_VERSION.img"
             elif [ -f "/boot/initrd.img" ]; then
                 INITRD="/boot/initrd.img"
             else
-                echo "Cannot find initrd image" >> /var/log/kexec-setup.log
-                ls -la /boot/ >> /var/log/kexec-setup.log
+                echo "Cannot find initrd image" | tee -a /var/log/kexec-setup.log
+                ls -la /boot/ | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
             
-            echo "Using kernel: \$VMLINUZ" >> /var/log/kexec-setup.log
-            echo "Using initrd: \$INITRD" >> /var/log/kexec-setup.log
+            echo "Using kernel: $VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Using initrd: $INITRD" | tee -a /var/log/kexec-setup.log
             
             # Get current kernel command line
-            CURRENT_CMDLINE=\$(cat /proc/cmdline)
-            echo "Current cmdline: \$CURRENT_CMDLINE" >> /var/log/kexec-setup.log
+            CURRENT_CMDLINE=$(cat /proc/cmdline)
+            echo "Current cmdline: $CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
+            
+            # Create simple fake config.sh that just triggers kexec with hardcoded paths
+            cat > /tmp/config.sh << EOF
+            #!/bin/bash
+            echo "Fake config.sh called with: \$@" | tee -a /var/log/kexec-setup.log
+            
+            # Hardcoded kexec parameters (embedded during script creation)
+            VMLINUZ="$VMLINUZ"
+            INITRD="$INITRD"  
+            CURRENT_CMDLINE="$CURRENT_CMDLINE"
+            
+            echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
             # Kexec into the same kernel but with our custom init script
-            echo "Preparing kexec..." >> /var/log/kexec-setup.log
             if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append="\$CURRENT_CMDLINE init=/persist/kexec-runner.sh"; then
-                echo "Failed to load kexec" >> /var/log/kexec-setup.log
+                echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
             
-            echo "Executing kexec..." >> /var/log/kexec-setup.log
+            echo "Executing kexec..." | tee -a /var/log/kexec-setup.log
             kexec -e
             EOF
             
             chmod +x /tmp/config.sh
-            echo "Kexec hello world setup complete. Fake config.sh ready." >> /var/log/kexec-setup.log
+            
+            echo "=== Contents of /tmp/config.sh ===" | tee -a /var/log/kexec-setup.log
+            cat /tmp/config.sh | tee -a /var/log/kexec-setup.log
+            echo "=== End of config.sh ===" | tee -a /var/log/kexec-setup.log
+            
+            echo "Kexec hello world setup complete. Fake config.sh ready." | tee -a /var/log/kexec-setup.log
 
   hello-world-test:
     needs: [setup-runner]
