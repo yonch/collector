@@ -43,6 +43,7 @@ jobs:
           image-type: ${{ inputs.image-type || 'ubuntu-22.04' }}
           volume-size: '20'
           runner-home-dir: '/tmp'
+          packages: '["kexec-tools"]'
           pre-runner-script: |
             # Kexec Hello World Setup
             # =======================
@@ -193,9 +194,6 @@ jobs:
             cat /tmp/config.sh | tee -a /var/log/kexec-setup.log
             echo "=== End of config.sh ===" | tee -a /var/log/kexec-setup.log
             
-            # Ensure required packages are installed
-            apt-get update
-            apt-get install -y kexec-tools
                         
             echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log            
             if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x64-2.313.0.tar.gz"; then
