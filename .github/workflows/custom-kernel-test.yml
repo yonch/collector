@@ -63,7 +63,7 @@ jobs:
             echo "========================================" >> /var/log/kexec-setup.log
             echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" >> /var/log/kexec-setup.log
             echo "========================================" >> /var/log/kexec-setup.log
-            echo "Kernel version: \$$(uname -r)" >> /var/log/kexec-setup.log
+            echo "Kernel version: '$(uname -r)'" >> /var/log/kexec-setup.log
             echo "System time: \$$(date)" >> /var/log/kexec-setup.log
             echo "Hostname: \$$(hostname)" >> /var/log/kexec-setup.log
             echo "Init PID: \$$\$$" >> /var/log/kexec-setup.log
@@ -77,9 +77,9 @@ jobs:
             echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
             
             # Read config parameters from the file saved before kexec
-            CONFIG_PARAMS=$(cat /tmp/config-params)
-            echo "Found saved config parameters: \$$CONFIG_PARAMS" >> /var/log/kexec-setup.log
-            ./config.sh \$$CONFIG_PARAMS
+            CONFIG_PARAMS='$(cat /tmp/config-params)'
+            echo "Found saved config parameters: '$CONFIG_PARAMS'" >> /var/log/kexec-setup.log
+            ./config.sh '$CONFIG_PARAMS'
             
             # Start the runner - this will wait for jobs
             echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
