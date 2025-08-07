@@ -215,9 +215,8 @@ jobs:
             cd /tmp
 
             echo "Kexec hello world setup complete. Fake config.sh ready." | tee -a /var/log/kexec-setup.log
-
   hello-world-test:
-    needs: [setup-runner, wait-for-runner]
+    needs: [setup-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 2
     steps:
@@ -259,7 +258,7 @@ jobs:
 
   stop-runner:
     name: Stop EC2 runner
-    needs: [setup-runner, wait-for-runner, hello-world-test]
+    needs: [setup-runner, hello-world-test]
     runs-on: ubuntu-latest
     if: always()  # Run even if previous jobs fail
     steps:
