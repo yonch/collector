@@ -63,10 +63,10 @@ jobs:
             echo "========================================" >> /var/log/kexec-setup.log
             echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" >> /var/log/kexec-setup.log
             echo "========================================" >> /var/log/kexec-setup.log
-            echo "Kernel version: $(uname -r)" >> /var/log/kexec-setup.log
-            echo "System time: $(date)" >> /var/log/kexec-setup.log
-            echo "Hostname: $(hostname)" >> /var/log/kexec-setup.log
-            echo "Init PID: $$" >> /var/log/kexec-setup.log
+            echo "Kernel version: \$(uname -r)" >> /var/log/kexec-setup.log
+            echo "System time: \$(date)" >> /var/log/kexec-setup.log
+            echo "Hostname: \$(hostname)" >> /var/log/kexec-setup.log
+            echo "Init PID: \$\$" >> /var/log/kexec-setup.log
             echo "========================================" >> /var/log/kexec-setup.log
             
             # Start the GitHub Actions runner
@@ -75,7 +75,11 @@ jobs:
             
             # Configure runner with the original GitHub parameters
             echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
-            ./config.sh "$@"
+            
+            # Read config parameters from the file saved before kexec
+            CONFIG_PARAMS=$(cat /tmp/config-params)
+            echo "Found saved config parameters: \$CONFIG_PARAMS" >> /var/log/kexec-setup.log
+            ./config.sh \$CONFIG_PARAMS
             
             # Start the runner - this will wait for jobs
             echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
@@ -91,11 +95,11 @@ jobs:
             
             # Find the correct kernel and initrd files
             KERNEL_VERSION=$(uname -r)
-            echo "Current kernel version: $KERNEL_VERSION" | tee -a /var/log/kexec-setup.log
+            echo "Current kernel version: \$KERNEL_VERSION" | tee -a /var/log/kexec-setup.log
             
             # Ubuntu AWS uses different naming patterns
-            if [ -f "/boot/vmlinuz-$KERNEL_VERSION" ]; then
-                VMLINUZ="/boot/vmlinuz-$KERNEL_VERSION"
+            if [ -f "/boot/vmlinuz-\$KERNEL_VERSION" ]; then
+                VMLINUZ="/boot/vmlinuz-\$KERNEL_VERSION"
             elif [ -f "/boot/vmlinuz" ]; then
                 VMLINUZ="/boot/vmlinuz"
             else
@@ -105,10 +109,10 @@ jobs:
             fi
             
             # Find initrd - Ubuntu AWS may use different names
-            if [ -f "/boot/initrd.img-$$KERNEL_VERSION" ]; then
-                INITRD="/boot/initrd.img-$$KERNEL_VERSION"
-            elif [ -f "/boot/initramfs-$$KERNEL_VERSION.img" ]; then
-                INITRD="/boot/initramfs-$$KERNEL_VERSION.img"
+            if [ -f "/boot/initrd.img-\$KERNEL_VERSION" ]; then
+                INITRD="/boot/initrd.img-\$KERNEL_VERSION"
+            elif [ -f "/boot/initramfs-\$KERNEL_VERSION.img" ]; then
+                INITRD="/boot/initramfs-\$KERNEL_VERSION.img"
             elif [ -f "/boot/initrd.img" ]; then
                 INITRD="/boot/initrd.img"
             else
@@ -117,28 +121,27 @@ jobs:
                 exit 1
             fi
             
-            echo "Using kernel: $$VMLINUZ" | tee -a /var/log/kexec-setup.log
-            echo "Using initrd: $$INITRD" | tee -a /var/log/kexec-setup.log
+            echo "Using kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Using initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
             # Get current kernel command line
-            CURRENT_CMDLINE=$$(cat /proc/cmdline)
-            echo "Current cmdline: $$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
+            CURRENT_CMDLINE=$(cat /proc/cmdline)
+            echo "Current cmdline: \$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
             
             # Create simple fake config.sh that just triggers kexec with hardcoded paths
             cat > /tmp/config.sh << EOF
             #!/bin/bash
             echo "Fake config.sh called with: \$$@" | tee -a /var/log/kexec-setup.log
             
-            # Hardcoded kexec parameters (embedded during script creation)
-            VMLINUZ="$$VMLINUZ"
-            INITRD="$$INITRD"  
-            CURRENT_CMDLINE="$$CURRENT_CMDLINE"
-            
-            echo "Preparing kexec with kernel: \$$VMLINUZ" | tee -a /var/log/kexec-setup.log
-            echo "Preparing kexec with initrd: \$$INITRD" | tee -a /var/log/kexec-setup.log
+            # Save the parameters to a file for post-kexec use
+            echo "\$@" > /tmp/config-params
+            echo "Saved config parameters to /tmp/config-params: \$@" | tee -a /var/log/kexec-setup.log
+                        
+            echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
             # Kexec into the same kernel but with our custom init script
-            if ! kexec -l "\$$VMLINUZ" --initrd="\$$INITRD" --append="\$$CURRENT_CMDLINE init=/persist/kexec-runner.sh"; then
+            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append="\$CURRENT_CMDLINE init=/persist/kexec-runner.sh"; then
                 echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
