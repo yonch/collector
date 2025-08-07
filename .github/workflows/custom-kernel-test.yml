@@ -62,29 +62,29 @@ jobs:
             #!/bin/bash
             
             # Log kexec success
-            echo "========================================" >> /var/log/kexec-setup.log
-            echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" >> /var/log/kexec-setup.log
-            echo "========================================" >> /var/log/kexec-setup.log
-            echo "Kernel version: '$(uname -r)'" >> /var/log/kexec-setup.log
-            echo "System time: '$(date)'" >> /var/log/kexec-setup.log
-            echo "Hostname: '$(hostname)'" >> /var/log/kexec-setup.log
-            echo "Init PID: '$$'" >> /var/log/kexec-setup.log
-            echo "========================================" >> /var/log/kexec-setup.log
+            echo "========================================" | tee -a /var/log/kexec-setup.log
+            echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" | tee -a /var/log/kexec-setup.log
+            echo "========================================" | tee -a /var/log/kexec-setup.log
+            echo "Kernel version: '$(uname -r)'" | tee -a /var/log/kexec-setup.log
+            echo "System time: '$(date)'" | tee -a /var/log/kexec-setup.log
+            echo "Hostname: '$(hostname)'" | tee -a /var/log/kexec-setup.log
+            echo "Init PID: '$$'" | tee -a /var/log/kexec-setup.log
+            echo "========================================" | tee -a /var/log/kexec-setup.log
             
             # Start the GitHub Actions runner
             cd /persist/actions-runner
             export RUNNER_ALLOW_RUNASROOT=1
             
             # Configure runner with the original GitHub parameters
-            echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
+            echo "Configuring GitHub Actions runner after kexec..." | tee -a /var/log/kexec-setup.log
             
             # Read config parameters from the file saved before kexec
             CONFIG_PARAMS="'$(cat /tmp/config-params)'"
-            echo "Found saved config parameters: '$CONFIG_PARAMS'" >> /var/log/kexec-setup.log
+            echo "Found saved config parameters: '$CONFIG_PARAMS'" | tee -a /var/log/kexec-setup.log
             ./config.sh "'$CONFIG_PARAMS'"
             
             # Start the runner - this will wait for jobs
-            echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
+            echo "Starting GitHub Actions runner after kexec..." | tee -a /var/log/kexec-setup.log
             ./run.sh
             EOF
             chmod +x /persist/kexec-runner.sh
