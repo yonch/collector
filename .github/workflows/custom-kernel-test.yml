@@ -124,15 +124,35 @@ jobs:
             echo "Using kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
             echo "Using initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
-            # Get current kernel command line
-            CURRENT_CMDLINE=$(cat /proc/cmdline)
-            echo "Current cmdline: \$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
-            
             # Write kernel paths and cmdline to temp files for config.sh to read
             echo "\$VMLINUZ" > /tmp/vmlinuz-path
             echo "\$INITRD" > /tmp/initrd-path
-            echo "\$CURRENT_CMDLINE" > /tmp/current-cmdline
+
+            # Create systemd service for GitHub runner (will start after kexec)
+            cat > /etc/systemd/system/github-runner.service << 'SYSTEMD_EOF'
+            [Unit]
+            Description=GitHub Actions Runner after kexec
+            After=basic.target network.target
+
+            [Service]
+            Type=simple
+            ExecStart=/persist/kexec-runner.sh
+            Restart=no
+            User=root
+            WorkingDirectory=/persist/actions-runner
+
+            [Install]
+            WantedBy=multi-user.target
+            SYSTEMD_EOF
             
+            # Enable the service to start on boot
+            systemctl enable github-runner.service
+            
+            echo "GitHub runner systemd service created and enabled" | tee -a /var/log/kexec-setup.log
+            echo "=== Contents of /etc/systemd/system/github-runner.service ===" | tee -a /var/log/kexec-setup.log
+            cat /etc/systemd/system/github-runner.service | tee -a /var/log/kexec-setup.log
+            echo "=== End of github-runner.service ===" | tee -a /var/log/kexec-setup.log
+
             # Create simple fake config.sh that just triggers kexec with hardcoded paths
             cat > /tmp/config.sh << 'EOF'
             #!/bin/bash
@@ -145,13 +165,16 @@ jobs:
             # Read kernel paths and cmdline from temp files
             VMLINUZ="'$(cat /tmp/vmlinuz-path)'"
             INITRD="'$(cat /tmp/initrd-path)'"
-            CURRENT_CMDLINE="'$(cat /tmp/current-cmdline)'"
                         
             echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
             echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
-            
+
+            # Get current kernel command line
+            CURRENT_CMDLINE="'$(cat /proc/cmdline)'"
+            echo "Current cmdline: \$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
+
             # Kexec into the same kernel but with our custom init script
-            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append=\"\$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
+            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append=\"\$CURRENT_CMDLINE\"; then
                 echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
