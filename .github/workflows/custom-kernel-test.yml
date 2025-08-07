@@ -143,9 +143,9 @@ jobs:
             echo "Saved config parameters to /tmp/config-params: '$@'" | tee -a /var/log/kexec-setup.log
             
             # Read kernel paths and cmdline from temp files
-            VMLINUZ=$(cat /tmp/vmlinuz-path)
-            INITRD=$(cat /tmp/initrd-path)
-            CURRENT_CMDLINE=$(cat /tmp/current-cmdline)
+            VMLINUZ='$(cat /tmp/vmlinuz-path)'
+            INITRD='$(cat /tmp/initrd-path)'
+            CURRENT_CMDLINE='$(cat /tmp/current-cmdline)'
                         
             echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
             echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
