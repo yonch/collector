@@ -137,11 +137,11 @@ jobs:
             echo "'$@'" > /tmp/config-params
             echo "Saved config parameters to /tmp/config-params: '$@'" | tee -a /var/log/kexec-setup.log
                         
-            echo "Preparing kexec with kernel: $$VMLINUZ" | tee -a /var/log/kexec-setup.log
-            echo "Preparing kexec with initrd: $$INITRD" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with kernel: $VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with initrd: $INITRD" | tee -a /var/log/kexec-setup.log
             
             # Kexec into the same kernel but with our custom init script
-            if ! kexec -l "$$VMLINUZ" --initrd="$$INITRD" --append=\"$$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
+            if ! kexec -l "$VMLINUZ" --initrd="$INITRD" --append=\"$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
                 echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
