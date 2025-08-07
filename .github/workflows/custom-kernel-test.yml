@@ -173,6 +173,10 @@ jobs:
             
             echo "GitHub Actions runner downloaded and extracted successfully" | tee -a /var/log/kexec-setup.log
 
+            # need to go back to /tmp, where the fake config.sh is located
+            echo "Changing directory to /tmp to run kexec setup" | tee -a /var/log/kexec-setup.log
+            cd /tmp
+
             echo "Kexec hello world setup complete. Fake config.sh ready." | tee -a /var/log/kexec-setup.log
 
   hello-world-test:
