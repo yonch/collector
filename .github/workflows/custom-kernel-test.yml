@@ -128,6 +128,11 @@ jobs:
             CURRENT_CMDLINE=$(cat /proc/cmdline)
             echo "Current cmdline: \$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
             
+            # Write kernel paths and cmdline to temp files for config.sh to read
+            echo "\$VMLINUZ" > /tmp/vmlinuz-path
+            echo "\$INITRD" > /tmp/initrd-path
+            echo "\$CURRENT_CMDLINE" > /tmp/current-cmdline
+            
             # Create simple fake config.sh that just triggers kexec with hardcoded paths
             cat > /tmp/config.sh << 'EOF'
             #!/bin/bash
@@ -136,12 +141,17 @@ jobs:
             # Save the parameters to a file for post-kexec use
             echo "'$@'" > /tmp/config-params
             echo "Saved config parameters to /tmp/config-params: '$@'" | tee -a /var/log/kexec-setup.log
+            
+            # Read kernel paths and cmdline from temp files
+            VMLINUZ=$(cat /tmp/vmlinuz-path)
+            INITRD=$(cat /tmp/initrd-path)
+            CURRENT_CMDLINE=$(cat /tmp/current-cmdline)
                         
-            echo "Preparing kexec with kernel: $VMLINUZ" | tee -a /var/log/kexec-setup.log
-            echo "Preparing kexec with initrd: $INITRD" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
+            echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
             # Kexec into the same kernel but with our custom init script
-            if ! kexec -l "$VMLINUZ" --initrd="$INITRD" --append=\"$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
+            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append=\"\$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
                 echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
