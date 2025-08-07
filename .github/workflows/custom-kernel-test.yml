@@ -64,9 +64,9 @@ jobs:
             echo "✅ KEXEC SUCCESSFUL - CUSTOM INIT RUNNING" >> /var/log/kexec-setup.log
             echo "========================================" >> /var/log/kexec-setup.log
             echo "Kernel version: '$(uname -r)'" >> /var/log/kexec-setup.log
-            echo "System time: \$$(date)" >> /var/log/kexec-setup.log
-            echo "Hostname: \$$(hostname)" >> /var/log/kexec-setup.log
-            echo "Init PID: \$$\$$" >> /var/log/kexec-setup.log
+            echo "System time: '$(date)'" >> /var/log/kexec-setup.log
+            echo "Hostname: '$(hostname)'" >> /var/log/kexec-setup.log
+            echo "Init PID: '$$'" >> /var/log/kexec-setup.log
             echo "========================================" >> /var/log/kexec-setup.log
             
             # Start the GitHub Actions runner
@@ -77,9 +77,9 @@ jobs:
             echo "Configuring GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
             
             # Read config parameters from the file saved before kexec
-            CONFIG_PARAMS='$(cat /tmp/config-params)'
+            CONFIG_PARAMS="'$(cat /tmp/config-params)'"
             echo "Found saved config parameters: '$CONFIG_PARAMS'" >> /var/log/kexec-setup.log
-            ./config.sh '$CONFIG_PARAMS'
+            ./config.sh "'$CONFIG_PARAMS'"
             
             # Start the runner - this will wait for jobs
             echo "Starting GitHub Actions runner after kexec..." >> /var/log/kexec-setup.log
@@ -129,19 +129,19 @@ jobs:
             echo "Current cmdline: \$CURRENT_CMDLINE" | tee -a /var/log/kexec-setup.log
             
             # Create simple fake config.sh that just triggers kexec with hardcoded paths
-            cat > /tmp/config.sh << EOF
+            cat > /tmp/config.sh << 'EOF'
             #!/bin/bash
-            echo "Fake config.sh called with: \$$@" | tee -a /var/log/kexec-setup.log
+            echo "Fake config.sh called with: '$@'" | tee -a /var/log/kexec-setup.log
             
             # Save the parameters to a file for post-kexec use
-            echo "\$@" > /tmp/config-params
-            echo "Saved config parameters to /tmp/config-params: \$@" | tee -a /var/log/kexec-setup.log
+            echo "'$@'" > /tmp/config-params
+            echo "Saved config parameters to /tmp/config-params: '$@'" | tee -a /var/log/kexec-setup.log
                         
             echo "Preparing kexec with kernel: \$VMLINUZ" | tee -a /var/log/kexec-setup.log
             echo "Preparing kexec with initrd: \$INITRD" | tee -a /var/log/kexec-setup.log
             
             # Kexec into the same kernel but with our custom init script
-            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append="\$CURRENT_CMDLINE init=/persist/kexec-runner.sh"; then
+            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append=\"\$CURRENT_CMDLINE init=/persist/kexec-runner.sh\"; then
                 echo "Failed to load kexec" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
