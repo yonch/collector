@@ -1,5 +1,7 @@
 name: Custom Kernel Test - Hello World with Kexec
 on: 
+  push:
+    branches: [ feature/test-custom-kernel ]
   workflow_dispatch:  # Manual trigger for testing
     inputs:
       instance-type:
