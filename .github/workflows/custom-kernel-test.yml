@@ -145,9 +145,13 @@ jobs:
             echo "Using kernel: \$VMLINUZ" >> /var/log/kexec-setup.log
             echo "Using initrd: \$INITRD" >> /var/log/kexec-setup.log
             
+            # Get current kernel command line
+            CURRENT_CMDLINE=\$(cat /proc/cmdline)
+            echo "Current cmdline: \$CURRENT_CMDLINE" >> /var/log/kexec-setup.log
+            
             # Kexec into the same kernel but with our custom init script
             echo "Preparing kexec..." >> /var/log/kexec-setup.log
-            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append="\$(cat /proc/cmdline) init=/persist/kexec-runner.sh"; then
+            if ! kexec -l "\$VMLINUZ" --initrd="\$INITRD" --append="\$CURRENT_CMDLINE init=/persist/kexec-runner.sh"; then
                 echo "Failed to load kexec" >> /var/log/kexec-setup.log
                 exit 1
             fi
