@@ -60,7 +60,7 @@ jobs:
             cd /persist/actions-runner
             
             echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log
-            case $$(uname -m) in 
+            case $(uname -m) in 
                 aarch64) RUNNER_ARCH="arm64" ;; 
                 *) RUNNER_ARCH="x64" ;; 
             esac
