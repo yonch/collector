@@ -81,7 +81,7 @@ jobs:
             
             # Read config parameters from the file saved before kexec
             CONFIG_PARAMS="'$(cat /persist/config-params)'"
-            echo "Found saved config parameters: '$CONFIG_PARAMS'" | tee -a /var/log/kexec-setup.log
+            echo "Found saved config parameters" | tee -a /var/log/kexec-setup.log
             ./config.sh "'$CONFIG_PARAMS'"
             
             # Start the runner - this will wait for jobs
@@ -161,11 +161,11 @@ jobs:
             # Create simple fake config.sh that just triggers kexec with hardcoded paths
             cat > /tmp/config.sh << 'EOF'
             #!/bin/bash
-            echo "Fake config.sh called with: '$@'" | tee -a /var/log/kexec-setup.log
+            echo "Fake config.sh called" | tee -a /var/log/kexec-setup.log
             
             # Save the parameters to a file for post-kexec use
             echo "'$@'" > /persist/config-params
-            echo "Saved config parameters to /persist/config-params: '$@'" | tee -a /var/log/kexec-setup.log
+            echo "Saved config parameters to /persist/config-params" | tee -a /var/log/kexec-setup.log
             
             # Read kernel paths and cmdline from temp files
             VMLINUZ="'$(cat /tmp/vmlinuz-path)'"
