@@ -196,7 +196,7 @@ jobs:
             
                         
             echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log            
-            if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x64-2.313.0.tar.gz"; then
+            if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.327.1/actions-runner-linux-x64-2.327.1.tar.gz"; then
                 echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
                 exit 1
             fi
