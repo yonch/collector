@@ -142,6 +142,8 @@ jobs:
             Restart=no
             User=root
             WorkingDirectory=/persist/actions-runner
+            StandardOutput=journal+console
+            StandardError=journal+console
 
             [Install]
             WantedBy=multi-user.target
