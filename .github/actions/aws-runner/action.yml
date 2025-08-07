@@ -89,6 +89,10 @@ inputs:
           "us-east-2": "ami-04f167a56786e4b09"
         }
       }
+  packages:
+    description: 'Additional packages to install on the runner as JSON array'
+    required: false
+    default: '[]'
 
 outputs:
   runner-label:
@@ -211,7 +215,7 @@ runs:
     # Start EC2 runner with availability-zones-config
     - name: Start EC2 runner
       id: start-ec2-runner
-      uses: yonch/ec2-github-runner@feature/multiple-az
+      uses: yonch/ec2-github-runner@feature/packages-installation
       continue-on-error: true
       with:
         mode: start
@@ -225,6 +229,7 @@ runs:
         runner-home-dir: ${{ inputs.runner-home-dir }}
         iam-role-name: ${{ inputs.iam-role-name }}
         availability-zones-config: ${{ steps.generate-configs.outputs.availability_zones_config }}
+        packages: ${{ inputs.packages }}
         aws-resource-tags: >
           [
             {"Key": "Name", "Value": "${{ inputs.runner-name-prefix }}"},
