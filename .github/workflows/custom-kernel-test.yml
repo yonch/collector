@@ -49,29 +49,8 @@ jobs:
             # 2. Creating a post-kexec script that starts the runner
             # 3. Setting up a fake config.sh to intercept and trigger kexec
             
-            echo "Setting up kexec hello world demo..." | tee -a /var/log/kexec-setup.log
-            
-            # Ensure required packages are installed
-            apt-get update
-            apt-get install -y kexec-tools curl
-            
-            # Create persistent directory and download the GitHub Actions runner
-            mkdir -p /persist/actions-runner
-            cd /persist/actions-runner
-            
-            echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log            
-            if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x86-2.313.0.tar.gz"; then
-                echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
-                exit 1
-            fi
-            
-            if ! tar xzf actions-runner.tar.gz; then
-                echo "Failed to extract GitHub Actions runner" | tee -a /var/log/kexec-setup.log
-                exit 1
-            fi
-            
-            echo "GitHub Actions runner downloaded and extracted successfully" | tee -a /var/log/kexec-setup.log
-            
+            echo "Setting up kexec..." | tee -a /var/log/kexec-setup.log
+                        
             # Create post-kexec init script that starts the runner (hello world comes later from the runner job)
             cat > /persist/kexec-runner.sh << 'EOF'
             #!/bin/bash
@@ -170,6 +149,27 @@ jobs:
             cat /tmp/config.sh | tee -a /var/log/kexec-setup.log
             echo "=== End of config.sh ===" | tee -a /var/log/kexec-setup.log
             
+            # Ensure required packages are installed
+            apt-get update
+            apt-get install -y kexec-tools
+            
+            # Create persistent directory and download the GitHub Actions runner
+            mkdir -p /persist/actions-runner
+            cd /persist/actions-runner
+            
+            echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log            
+            if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x64-2.313.0.tar.gz"; then
+                echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
+                exit 1
+            fi
+            
+            if ! tar xzf actions-runner.tar.gz; then
+                echo "Failed to extract GitHub Actions runner" | tee -a /var/log/kexec-setup.log
+                exit 1
+            fi
+            
+            echo "GitHub Actions runner downloaded and extracted successfully" | tee -a /var/log/kexec-setup.log
+
             echo "Kexec hello world setup complete. Fake config.sh ready." | tee -a /var/log/kexec-setup.log
 
   hello-world-test:
