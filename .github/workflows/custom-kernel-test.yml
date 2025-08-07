@@ -238,9 +238,9 @@ jobs:
           
           # Check if our kexec setup logs exist
           if [ -f /var/log/kexec-setup.log ]; then
-            echo "✅ Found kexec setup log! Last 20 lines:"
+            echo "✅ Found kexec setup log! Contents:"
             echo "----------------------------------------"
-            tail -20 /var/log/kexec-setup.log
+            cat /var/log/kexec-setup.log
           else
             echo "⚠️ No kexec setup log found - this might indicate kexec didn't work as expected"
           fi
