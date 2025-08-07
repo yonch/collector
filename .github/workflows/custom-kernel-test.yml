@@ -185,7 +185,7 @@ jobs:
   hello-world-test:
     needs: [setup-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
-    timeout-minutes: 10
+    timeout-minutes: 1
     steps:
       - name: Hello World from kexec'd runner
         run: |
