@@ -50,6 +50,10 @@ jobs:
             # 3. Setting up a fake config.sh to intercept and trigger kexec
             
             echo "Setting up kexec..." | tee -a /var/log/kexec-setup.log
+
+            # Create persistent directory and download the GitHub Actions runner
+            mkdir -p /persist/actions-runner
+            cd /persist/actions-runner
                         
             # Create post-kexec init script that starts the runner (hello world comes later from the runner job)
             cat > /persist/kexec-runner.sh << 'EOF'
@@ -86,12 +90,12 @@ jobs:
             echo "=== End of kexec-runner.sh ===" | tee -a /var/log/kexec-setup.log
             
             # Find the correct kernel and initrd files
-            KERNEL_VERSION=$$(uname -r)
-            echo "Current kernel version: $$KERNEL_VERSION" | tee -a /var/log/kexec-setup.log
+            KERNEL_VERSION=$(uname -r)
+            echo "Current kernel version: $KERNEL_VERSION" | tee -a /var/log/kexec-setup.log
             
             # Ubuntu AWS uses different naming patterns
-            if [ -f "/boot/vmlinuz-$$KERNEL_VERSION" ]; then
-                VMLINUZ="/boot/vmlinuz-$$KERNEL_VERSION"
+            if [ -f "/boot/vmlinuz-$KERNEL_VERSION" ]; then
+                VMLINUZ="/boot/vmlinuz-$KERNEL_VERSION"
             elif [ -f "/boot/vmlinuz" ]; then
                 VMLINUZ="/boot/vmlinuz"
             else
@@ -152,11 +156,7 @@ jobs:
             # Ensure required packages are installed
             apt-get update
             apt-get install -y kexec-tools
-            
-            # Create persistent directory and download the GitHub Actions runner
-            mkdir -p /persist/actions-runner
-            cd /persist/actions-runner
-            
+                        
             echo "Downloading GitHub Actions runner..." | tee -a /var/log/kexec-setup.log            
             if ! curl -L -o "actions-runner.tar.gz" "https://github.com/actions/runner/releases/download/v2.313.0/actions-runner-linux-x64-2.313.0.tar.gz"; then
                 echo "Failed to download GitHub Actions runner" | tee -a /var/log/kexec-setup.log
