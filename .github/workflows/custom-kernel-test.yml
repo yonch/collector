@@ -79,7 +79,7 @@ jobs:
             echo "Configuring GitHub Actions runner after kexec..." | tee -a /var/log/kexec-setup.log
             
             # Read config parameters from the file saved before kexec
-            CONFIG_PARAMS="'$(cat /tmp/config-params)'"
+            CONFIG_PARAMS="'$(cat /persist/config-params)'"
             echo "Found saved config parameters: '$CONFIG_PARAMS'" | tee -a /var/log/kexec-setup.log
             ./config.sh "'$CONFIG_PARAMS'"
             
@@ -163,8 +163,8 @@ jobs:
             echo "Fake config.sh called with: '$@'" | tee -a /var/log/kexec-setup.log
             
             # Save the parameters to a file for post-kexec use
-            echo "'$@'" > /tmp/config-params
-            echo "Saved config parameters to /tmp/config-params: '$@'" | tee -a /var/log/kexec-setup.log
+            echo "'$@'" > /persist/config-params
+            echo "Saved config parameters to /persist/config-params: '$@'" | tee -a /var/log/kexec-setup.log
             
             # Read kernel paths and cmdline from temp files
             VMLINUZ="'$(cat /tmp/vmlinuz-path)'"
