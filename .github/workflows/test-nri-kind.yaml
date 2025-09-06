@@ -219,6 +219,9 @@ jobs:
       
       - name: Verify collector is running
         run: |
+          echo "=== Waiting for collector pod to be ready ==="
+          kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=collector --timeout=60s
+          
           kubectl get pods -l app.kubernetes.io/name=collector
           
           if kubectl get pods -l app.kubernetes.io/name=collector --no-headers | grep -q "Running"; then
