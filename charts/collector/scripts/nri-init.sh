@@ -151,21 +151,50 @@ EOF
 
 # Restart containerd service
 restart_containerd() {
-    if is_k3s; then
-        log "INFO" "Restarting K3s service to apply NRI configuration"
-        systemctl restart k3s || systemctl restart k3s-agent || {
-            log "ERROR" "Failed to restart K3s service"
-            return 1
-        }
-    else
-        log "INFO" "Restarting containerd service to apply NRI configuration"
-        systemctl restart containerd || {
-            log "ERROR" "Failed to restart containerd service"
-            return 1
-        }
+    # Try to use nsenter to execute commands in host namespace if available
+    # This allows the init container to restart services on the host
+    NSENTER=""
+    if [ -e /host/proc/1/ns/mnt ]; then
+        NSENTER="nsenter --target 1 --mount --uts --ipc --net --pid --"
+        log "INFO" "Using nsenter to execute commands on host"
+    elif [ -e /proc/1/ns/mnt ] && [ "$(readlink /proc/1/ns/mnt)" != "$(readlink /proc/self/ns/mnt)" ]; then
+        NSENTER="nsenter --target 1 --mount --uts --ipc --net --pid --"
+        log "INFO" "Using nsenter to execute commands on host"
     fi
     
-    log "INFO" "Service restarted successfully"
+    if is_k3s; then
+        log "INFO" "Restarting K3s service to apply NRI configuration"
+        # Try to restart K3s
+        if [ -n "$NSENTER" ]; then
+            $NSENTER systemctl restart k3s 2>/dev/null || \
+            $NSENTER systemctl restart k3s-agent 2>/dev/null || \
+            $NSENTER service k3s restart 2>/dev/null || \
+            $NSENTER service k3s-agent restart 2>/dev/null || {
+                log "ERROR" "Failed to restart K3s service"
+                return 1
+            }
+        else
+            log "WARN" "Cannot restart K3s from container without nsenter"
+            log "WARN" "Please restart K3s manually on the host"
+            return 1
+        fi
+    else
+        log "INFO" "Restarting containerd service to apply NRI configuration"
+        # Try to restart containerd
+        if [ -n "$NSENTER" ]; then
+            $NSENTER systemctl restart containerd 2>/dev/null || \
+            $NSENTER service containerd restart 2>/dev/null || {
+                log "ERROR" "Failed to restart containerd service"
+                return 1
+            }
+        else
+            log "WARN" "Cannot restart containerd from container without nsenter"
+            log "WARN" "Please restart containerd manually on the host"
+            return 1
+        fi
+    fi
+    
+    log "INFO" "Service restart command issued"
     
     # Wait for socket to appear
     log "INFO" "Waiting for NRI socket to become available..."

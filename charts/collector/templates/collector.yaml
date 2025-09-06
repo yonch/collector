@@ -81,10 +81,9 @@ spec:
               mountPath: /var/lib/rancher
             - name: var-run
               mountPath: /var/run
-            - name: dbus
-              mountPath: /var/run/dbus
-            - name: systemd
-              mountPath: /run/systemd
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -158,14 +157,10 @@ spec:
           hostPath:
             path: /var/run
             type: Directory
-        - name: dbus
+        - name: host-proc
           hostPath:
-            path: /var/run/dbus
-            type: DirectoryOrCreate
-        - name: systemd
-          hostPath:
-            path: /run/systemd
-            type: DirectoryOrCreate
+            path: /proc
+            type: Directory
         - name: sys-kernel-debug
           hostPath:
             path: /sys/kernel/debug

@@ -6,7 +6,8 @@ FROM alpine:3.19
 RUN apk add --no-cache \
     bash \
     sed \
-    systemd
+    grep \
+    util-linux
 
 # Create directory for scripts
 RUN mkdir -p /scripts
