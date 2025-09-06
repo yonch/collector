@@ -21,10 +21,9 @@ jobs:
     strategy:
       matrix:
         k3s_version: 
-          - "v1.27.16+k3s1"  # Older stable
-          - "v1.28.12+k3s1"  # Current stable
-          - "v1.29.7+k3s1"   # Latest stable
-          - "v1.30.3+k3s2"   # Newest available
+          - "v1.30.14+k3s2"  # Latest v1.30
+          - "v1.31.12+k3s1"  # Latest v1.31
+          - "v1.32.8+k3s1"   # Latest v1.32
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
