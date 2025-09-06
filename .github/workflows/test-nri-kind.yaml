@@ -1,0 +1,244 @@
+name: Test NRI on KIND (standard containerd)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'charts/collector/scripts/nri-init.sh'
+      - 'charts/collector/templates/**'
+      - '.github/workflows/test-nri-kind.yaml'
+  pull_request:
+    paths:
+      - 'charts/collector/scripts/nri-init.sh'
+      - 'charts/collector/templates/**'
+      - '.github/workflows/test-nri-kind.yaml'
+  workflow_dispatch:
+
+jobs:
+  test-nri-kind-configure:
+    name: Test NRI Configuration on KIND
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install KIND
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client
+      
+      - name: Create KIND cluster WITHOUT NRI enabled
+        run: |
+          # Create KIND cluster config WITHOUT NRI (to test our init container)
+          cat > kind-config.yaml << 'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          name: nri-test
+          nodes:
+          - role: control-plane
+            # Mount host directories for our init container to access
+            extraMounts:
+            - hostPath: /etc/containerd
+              containerPath: /host-etc-containerd
+            - hostPath: /var/run
+              containerPath: /host-var-run
+            - hostPath: /proc
+              containerPath: /host-proc
+              readOnly: true
+          EOF
+          
+          # Create directories that will be mounted
+          sudo mkdir -p /etc/containerd
+          sudo mkdir -p /var/run
+          
+          kind create cluster --config kind-config.yaml --wait 300s
+          
+          kubectl cluster-info --context kind-nri-test
+          kubectl get nodes
+      
+      - name: Verify NRI is NOT enabled initially
+        run: |
+          echo "=== Checking initial NRI status ==="
+          
+          # Check containerd config in KIND node
+          docker exec nri-test-control-plane cat /etc/containerd/config.toml > initial-config.toml
+          
+          if grep -q 'plugins."io.containerd.nri.v1.nri"' initial-config.toml; then
+            echo "⚠️ NRI already configured in KIND (unexpected)"
+            cat initial-config.toml
+          else
+            echo "✓ NRI not configured initially (expected)"
+          fi
+          
+          # Check for NRI socket
+          docker exec nri-test-control-plane ls -la /var/run/nri/ 2>/dev/null || echo "✓ NRI socket directory does not exist (expected)"
+      
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      
+      - name: Deploy collector with NRI configuration (no restart)
+        run: |
+          # First deployment: configure only, no restart
+          helm install test-collector ./charts/collector \
+            --set storage.type=local \
+            --set nri.configure=true \
+            --set nri.restart=false \
+            --wait --timeout=2m
+      
+      - name: Check NRI init container logs
+        run: |
+          POD=$(kubectl get pod -l app.kubernetes.io/name=collector -o jsonpath='{.items[0].metadata.name}')
+          
+          echo "=== NRI Init Container Logs ==="
+          kubectl logs $POD -c nri-init
+          
+          # Verify standard containerd was detected (not K3s)
+          if kubectl logs $POD -c nri-init | grep -q "K3s installation detected"; then
+            echo "✗ Incorrectly detected K3s"
+            exit 1
+          else
+            echo "✓ Correctly detected standard containerd"
+          fi
+          
+          # Verify configuration was attempted
+          if kubectl logs $POD -c nri-init | grep -q "Configuring NRI for standard containerd"; then
+            echo "✓ Configuration attempted for standard containerd"
+          else
+            echo "✗ Configuration was not attempted"
+            exit 1
+          fi
+      
+      - name: Verify containerd config was modified
+        run: |
+          echo "=== Checking if NRI was added to containerd config ==="
+          
+          # Get the updated config from KIND node
+          docker exec nri-test-control-plane cat /etc/containerd/config.toml > updated-config.toml
+          
+          if grep -q 'plugins."io.containerd.nri.v1.nri"' updated-config.toml; then
+            echo "✓ NRI configuration added to containerd config"
+            grep -A 7 'plugins."io.containerd.nri.v1.nri"' updated-config.toml
+          else
+            echo "✗ NRI configuration not found in containerd config"
+            echo "Config contents:"
+            cat updated-config.toml
+            exit 1
+          fi
+          
+          # Verify it's set to enabled
+          if grep -A 5 'plugins."io.containerd.nri.v1.nri"' updated-config.toml | grep -q "disable = false"; then
+            echo "✓ NRI is set to enabled (disable = false)"
+          else
+            echo "✗ NRI not properly enabled"
+            exit 1
+          fi
+      
+      - name: Test with restart enabled
+        run: |
+          # Uninstall first deployment
+          helm uninstall test-collector
+          kubectl wait --for=delete pod -l app.kubernetes.io/name=collector --timeout=30s || true
+          
+          echo "=== Testing NRI with restart enabled ==="
+          
+          # Deploy with restart enabled
+          helm install test-collector-restart ./charts/collector \
+            --set storage.type=local \
+            --set nri.configure=true \
+            --set nri.restart=true \
+            --wait --timeout=3m
+      
+      - name: Check restart attempt logs
+        run: |
+          POD=$(kubectl get pod -l app.kubernetes.io/name=collector -o jsonpath='{.items[0].metadata.name}')
+          
+          echo "=== Init container logs with restart enabled ==="
+          kubectl logs $POD -c nri-init
+          
+          # Should attempt restart
+          if kubectl logs $POD -c nri-init | grep -q "Restarting containerd\|Using nsenter"; then
+            echo "✓ Restart was attempted"
+          else
+            echo "✗ Restart was not attempted"
+            exit 1
+          fi
+      
+      - name: Verify NRI socket status
+        run: |
+          # Give containerd time to restart and create socket
+          sleep 15
+          
+          echo "=== Checking for NRI socket in KIND node ==="
+          
+          # Check inside the KIND node container
+          docker exec nri-test-control-plane ls -la /var/run/nri/nri.sock 2>/dev/null && {
+            echo "✓ NRI socket exists after restart!"
+          } || {
+            echo "⚠️ NRI socket not found after restart"
+            echo "This could mean:"
+            echo "- Containerd restart from init container didn't work"
+            echo "- KIND's containerd doesn't support NRI"
+            echo "- Socket is created elsewhere"
+            
+            echo "Checking containerd status in KIND:"
+            docker exec nri-test-control-plane systemctl status containerd --no-pager || \
+              docker exec nri-test-control-plane service containerd status || \
+              echo "Could not check containerd status"
+          }
+      
+      - name: Test idempotency
+        run: |
+          # Uninstall and reinstall multiple times
+          helm uninstall test-collector-restart
+          kubectl wait --for=delete pod -l app.kubernetes.io/name=collector --timeout=30s || true
+          
+          echo "=== Testing idempotency - Run 1 ==="
+          helm install test1 ./charts/collector \
+            --set storage.type=local \
+            --set nri.configure=true \
+            --set nri.restart=false \
+            --wait --timeout=2m
+          
+          docker exec nri-test-control-plane cat /etc/containerd/config.toml > config1.toml
+          
+          helm uninstall test1
+          kubectl wait --for=delete pod -l app.kubernetes.io/name=collector --timeout=30s || true
+          
+          echo "=== Testing idempotency - Run 2 ==="
+          helm install test2 ./charts/collector \
+            --set storage.type=local \
+            --set nri.configure=true \
+            --set nri.restart=false \
+            --wait --timeout=2m
+          
+          docker exec nri-test-control-plane cat /etc/containerd/config.toml > config2.toml
+          
+          # Compare configs
+          if diff config1.toml config2.toml; then
+            echo "✓ Configuration remains identical (idempotent)"
+          else
+            echo "✗ Configuration changed between runs"
+            diff config1.toml config2.toml
+            exit 1
+          fi
+          
+          helm uninstall test2
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          helm uninstall test-collector-restart || true
+          helm uninstall test-collector || true
+          helm uninstall test1 || true
+          helm uninstall test2 || true
+          kind delete cluster --name nri-test || true
