@@ -89,10 +89,11 @@ jobs:
     strategy:
       matrix:
         scenario:
-          - name: "NRI Socket Exists"
+          - name: "NRI Socket Exists"  
             setup: |
               sudo mkdir -p /var/run/nri
-              sudo touch /var/run/nri/nri.sock
+              # Create a unix socket instead of a regular file
+              sudo python3 -c "import socket; s = socket.socket(socket.AF_UNIX); s.bind('/var/run/nri/nri.sock')"
             expected: "NRI socket found"
           - name: "NRI Socket Missing"
             setup: |
