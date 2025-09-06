@@ -20,10 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        k3s_version: 
-          - "v1.30.14+k3s2"  # Latest v1.30
-          - "v1.31.12+k3s1"  # Latest v1.31
-          - "v1.32.8+k3s1"   # Latest v1.32
+        include:
+          - k3s_version: "v1.28.15+k3s1"  # Older version - NRI not enabled by default
+            nri_preinstalled: false
+          - k3s_version: "v1.29.10+k3s1"  # Older version - NRI not enabled by default  
+            nri_preinstalled: false
+          - k3s_version: "v1.30.14+k3s2"  # Latest v1.30
+            nri_preinstalled: false
+          - k3s_version: "v1.31.12+k3s1"  # Latest v1.31
+            nri_preinstalled: false
+          - k3s_version: "v1.32.8+k3s1"   # Latest v1.32 - NRI enabled by default
+            nri_preinstalled: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -86,39 +93,78 @@ jobs:
           echo "=== NRI Init Container Logs ==="
           kubectl logs $POD -c nri-init
           
-          # Verify K3s was detected OR NRI already enabled
-          if kubectl logs $POD -c nri-init | grep -q "K3s installation detected"; then
-            echo "✓ K3s correctly detected"
-          elif kubectl logs $POD -c nri-init | grep -q "NRI is already enabled and available"; then
-            echo "✓ NRI already enabled (newer K3s versions enable it by default)"
+          # Check based on whether NRI should be pre-installed
+          if [ "${{ matrix.nri_preinstalled }}" = "true" ]; then
+            echo "=== Testing K3s with NRI pre-enabled (v1.32+) ==="
+            if kubectl logs $POD -c nri-init | grep -q "NRI is already enabled and available"; then
+              echo "✓ NRI detected as already enabled (expected for K3s ${{ matrix.k3s_version }})"
+            else
+              echo "✗ NRI should be pre-enabled in K3s ${{ matrix.k3s_version }}"
+              exit 1
+            fi
           else
-            echo "✗ K3s not detected and NRI not already enabled"
-            exit 1
-          fi
-          
-          # Verify configuration was updated
-          if kubectl logs $POD -c nri-init | grep -q "K3s containerd template updated"; then
-            echo "✓ K3s template updated"
-          elif kubectl logs $POD -c nri-init | grep -q "NRI section found in K3s template"; then
-            echo "✓ NRI already configured in K3s template"
-          else
-            echo "⚠ K3s template may not have been updated"
+            echo "=== Testing K3s without NRI pre-enabled (older versions) ==="
+            if kubectl logs $POD -c nri-init | grep -q "K3s installation detected"; then
+              echo "✓ K3s correctly detected"
+            else
+              echo "✗ K3s not detected"
+              exit 1
+            fi
+            
+            # Verify configuration was attempted
+            if kubectl logs $POD -c nri-init | grep -q "K3s containerd template updated\|Configuring NRI for K3s"; then
+              echo "✓ K3s template/config updated"
+            elif kubectl logs $POD -c nri-init | grep -q "NRI section found"; then
+              echo "✓ NRI already configured"
+            else
+              echo "✗ K3s configuration was not attempted"
+              exit 1
+            fi
           fi
       
       - name: Verify K3s template was modified
         run: |
-          echo "=== Checking if NRI was added to K3s template ==="
-          if sudo grep -q 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl; then
-            echo "✓ NRI configuration found in K3s template"
-            sudo grep -A 5 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
-          else
-            echo "✗ NRI configuration not found in K3s template"
-            echo "Full template contents:"
-            sudo cat /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
+          echo "=== Checking if NRI was added to K3s config ==="
+          
+          # Check template file if it exists
+          if [ -f "/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl" ]; then
+            if sudo grep -q 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl; then
+              echo "✓ NRI configuration found in K3s template"
+              sudo grep -A 5 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl
+            else
+              if [ "${{ matrix.nri_preinstalled }}" = "false" ]; then
+                echo "✗ NRI configuration not found in K3s template (expected to be added)"
+                exit 1
+              else
+                echo "⚠ Template file exists but no NRI config (may be in generated config)"
+              fi
+            fi
+          fi
+          
+          # Also check the actual running config
+          if [ -f "/var/lib/rancher/k3s/agent/etc/containerd/config.toml" ]; then
+            echo "=== Checking actual containerd config ==="
+            if sudo grep -q 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml; then
+              echo "✓ NRI configuration found in running config"
+              sudo grep -A 5 'plugins."io.containerd.nri.v1.nri"' /var/lib/rancher/k3s/agent/etc/containerd/config.toml
+            else
+              if [ "${{ matrix.nri_preinstalled }}" = "true" ]; then
+                echo "⚠ NRI may be enabled differently in K3s ${{ matrix.k3s_version }}"
+              else
+                echo "⚠ NRI configuration not found in running config"
+              fi
+            fi
           fi
       
       - name: Test with restart enabled (careful!)
         run: |
+          # Skip restart test for versions with NRI pre-enabled
+          if [ "${{ matrix.nri_preinstalled }}" = "true" ]; then
+            echo "=== Skipping restart test for K3s ${{ matrix.k3s_version }} ==="
+            echo "NRI is already enabled, restart not needed"
+            exit 0
+          fi
+          
           # First uninstall existing deployment
           helm uninstall test-collector
           
