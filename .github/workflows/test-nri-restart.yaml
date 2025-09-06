@@ -20,23 +20,45 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Test restart detection in container
+      - name: Test configure+restart together
         run: |
-          # The script should detect it's in a container and not try to restart
+          # Test with both configure and restart enabled
           export NRI_CONFIGURE=true
           export NRI_RESTART=true
           
-          # Create a fake container environment
-          sudo touch /.dockerenv
+          # Create mock containerd config
+          sudo mkdir -p /etc/containerd
+          cat | sudo tee /etc/containerd/config.toml > /dev/null << 'EOF'
+          version = 2
+          [plugins."io.containerd.grpc.v1.cri"]
+            enable_selinux = false
+          EOF
           
+          # Run script (will fail to restart but should configure)
           output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
           echo "$output"
           
-          # Since we're in a "container", restart should fail gracefully
-          if echo "$output" | grep -q "cannot restart.*from container\|Cannot restart.*from container\|Please restart.*manually"; then
-            echo "✓ Script correctly detected container environment and avoided restart"
+          # Check that configuration was attempted
+          if echo "$output" | grep -q "Configuring NRI\|configuration updated"; then
+            echo "✓ Configuration was attempted"
           else
-            echo "✗ Script did not handle container environment properly"
+            echo "✗ Configuration was not attempted"
+            exit 1
+          fi
+          
+          # Check that restart was attempted
+          if echo "$output" | grep -q "Restarting\|Cannot restart.*from container\|Using nsenter"; then
+            echo "✓ Restart was attempted"
+          else
+            echo "✗ Restart was not attempted with configure+restart both true"
+            exit 1
+          fi
+          
+          # Verify config was actually modified
+          if sudo grep -q 'plugins."io.containerd.nri.v1.nri"' /etc/containerd/config.toml; then
+            echo "✓ Config file was successfully modified"
+          else
+            echo "✗ Config file was not modified"
             exit 1
           fi
 
@@ -103,20 +125,139 @@ jobs:
       
       - name: Test restart behavior in Docker
         run: |
-          # Run the init script in a container with host proc mounted
+          # Create a mock containerd config that will be mounted
+          mkdir -p mock-etc/containerd
+          cat > mock-etc/containerd/config.toml << 'EOF'
+          version = 2
+          [plugins."io.containerd.grpc.v1.cri"]
+            enable_selinux = false
+          EOF
+          
+          # Run the init script in a container with host proc and config mounted
           docker run --rm \
             -v /proc:/host/proc:ro \
-            -e NRI_CONFIGURE=false \
+            -v $(pwd)/mock-etc/containerd:/etc/containerd \
+            -e NRI_CONFIGURE=true \
             -e NRI_RESTART=true \
             nri-test:latest \
             /scripts/nri-init.sh 2>&1 | tee output.txt || true
           
-          # Check that it attempts to use nsenter
-          if grep -q "Using nsenter\|cannot restart.*from container\|Cannot restart" output.txt; then
-            echo "✓ Script handled restart request appropriately"
+          # Check that configuration happened
+          if grep -q "Configuring NRI\|configuration updated" output.txt; then
+            echo "✓ Configuration was performed"
           else
-            echo "✗ Script did not handle restart properly"
+            echo "✗ Configuration was not performed"
             cat output.txt
+            exit 1
+          fi
+          
+          # Check that it attempts to use nsenter for restart
+          if grep -q "Using nsenter\|Cannot restart.*from container\|Restarting" output.txt; then
+            echo "✓ Script attempted restart with nsenter"
+          else
+            echo "✗ Script did not attempt restart"
+            cat output.txt
+            exit 1
+          fi
+          
+          # Verify the config was actually modified
+          if grep -q 'plugins."io.containerd.nri.v1.nri"' mock-etc/containerd/config.toml; then
+            echo "✓ Config file was modified in container"
+            cat mock-etc/containerd/config.toml
+          else
+            echo "✗ Config file was not modified"
+            cat mock-etc/containerd/config.toml
+            exit 1
+          fi
+
+  test-nsenter-with-restart:
+    name: Test nsenter with Configure+Restart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Test nsenter path with configure+restart
+        run: |
+          # Create mock environment
+          sudo mkdir -p /etc/containerd
+          sudo mkdir -p /host/proc/1/ns
+          sudo touch /host/proc/1/ns/mnt
+          
+          cat | sudo tee /etc/containerd/config.toml > /dev/null << 'EOF'
+          version = 2
+          [plugins."io.containerd.grpc.v1.cri"]
+            enable_selinux = false
+          EOF
+          
+          # Run with both configure and restart
+          export NRI_CONFIGURE=true
+          export NRI_RESTART=true
+          
+          output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
+          echo "$output"
+          
+          # Should configure
+          if sudo grep -q 'plugins."io.containerd.nri.v1.nri"' /etc/containerd/config.toml; then
+            echo "✓ Configuration was updated"
+          else
+            echo "✗ Configuration was not updated"
+            exit 1
+          fi
+          
+          # Should attempt restart with nsenter
+          if echo "$output" | grep -q "Using nsenter\|Restarting"; then
+            echo "✓ Attempted restart with nsenter"
+          else
+            echo "✗ Did not attempt restart with nsenter"
+            exit 1
+          fi
+
+  test-container-detection:
+    name: Test Container Detection During Restart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Test container detection logic
+        run: |
+          # Test that script correctly detects when running in container vs host
+          
+          # First test: No /host/proc - should warn about no nsenter
+          sudo mkdir -p /etc/containerd
+          cat | sudo tee /etc/containerd/config.toml > /dev/null << 'EOF'
+          version = 2
+          [plugins."io.containerd.grpc.v1.cri"]
+            enable_selinux = false
+          EOF
+          
+          export NRI_CONFIGURE=true
+          export NRI_RESTART=true
+          
+          output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
+          echo "=== Test without /host/proc ==="
+          echo "$output"
+          
+          if echo "$output" | grep -q "Cannot restart.*from container\|Please restart.*manually"; then
+            echo "✓ Correctly detected container environment without nsenter"
+          else
+            echo "✗ Did not properly handle container environment"
+            exit 1
+          fi
+          
+          # Second test: With /host/proc - should use nsenter
+          sudo mkdir -p /host/proc/1/ns
+          sudo touch /host/proc/1/ns/mnt
+          
+          output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
+          echo "=== Test with /host/proc ==="
+          echo "$output"
+          
+          if echo "$output" | grep -q "Using nsenter"; then
+            echo "✓ Correctly detected nsenter availability"
+          else
+            echo "✗ Did not detect nsenter availability"
             exit 1
           fi
 
