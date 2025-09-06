@@ -195,48 +195,93 @@ restart_containerd() {
         log "INFO" "Restarting K3s service to apply NRI configuration"
         # Try to restart K3s
         if [ -n "$NSENTER" ]; then
-            $NSENTER systemctl restart k3s 2>/dev/null || \
-            $NSENTER systemctl restart k3s-agent 2>/dev/null || \
-            $NSENTER service k3s restart 2>/dev/null || \
-            $NSENTER service k3s-agent restart 2>/dev/null || {
-                log "ERROR" "Failed to restart K3s service"
-                return 1
-            }
+            # First check if systemctl or service is available
+            if $NSENTER which systemctl >/dev/null 2>&1; then
+                log "INFO" "Attempting K3s restart via systemctl"
+                if $NSENTER systemctl restart k3s 2>/dev/null; then
+                    log "INFO" "K3s service restart command issued via systemctl"
+                elif $NSENTER systemctl restart k3s-agent 2>/dev/null; then
+                    log "INFO" "K3s-agent service restart command issued via systemctl"
+                else
+                    log "WARN" "Failed to restart K3s via systemctl"
+                    log "WARN" "This may be due to container security restrictions"
+                    log "INFO" "K3s configuration has been updated but requires manual restart"
+                    return 2  # Special return code for restart attempted but failed
+                fi
+            elif $NSENTER which service >/dev/null 2>&1; then
+                log "INFO" "Attempting K3s restart via service command"
+                if $NSENTER service k3s restart 2>/dev/null; then
+                    log "INFO" "K3s service restart command issued via service"
+                elif $NSENTER service k3s-agent restart 2>/dev/null; then
+                    log "INFO" "K3s-agent service restart command issued via service"
+                else
+                    log "WARN" "Failed to restart K3s via service command"
+                    log "WARN" "This may be due to container security restrictions"
+                    log "INFO" "K3s configuration has been updated but requires manual restart"
+                    return 2
+                fi
+            else
+                log "WARN" "Neither systemctl nor service command available"
+                log "INFO" "K3s configuration has been updated but requires manual restart"
+                return 2
+            fi
         else
             log "WARN" "Cannot restart K3s from container without nsenter"
-            log "WARN" "Please restart K3s manually on the host"
-            return 1
+            log "INFO" "K3s configuration has been updated but requires manual restart"
+            return 2
         fi
     else
         log "INFO" "Restarting containerd service to apply NRI configuration"
         # Try to restart containerd
         if [ -n "$NSENTER" ]; then
-            $NSENTER systemctl restart containerd 2>/dev/null || \
-            $NSENTER service containerd restart 2>/dev/null || {
-                log "ERROR" "Failed to restart containerd service"
-                return 1
-            }
+            if $NSENTER which systemctl >/dev/null 2>&1; then
+                log "INFO" "Attempting containerd restart via systemctl"
+                if $NSENTER systemctl restart containerd 2>/dev/null; then
+                    log "INFO" "Containerd service restart command issued via systemctl"
+                else
+                    log "WARN" "Failed to restart containerd via systemctl"
+                    log "WARN" "This may be due to container security restrictions"
+                    log "INFO" "Containerd configuration has been updated but requires manual restart"
+                    return 2
+                fi
+            elif $NSENTER which service >/dev/null 2>&1; then
+                log "INFO" "Attempting containerd restart via service command"
+                if $NSENTER service containerd restart 2>/dev/null; then
+                    log "INFO" "Containerd service restart command issued via service"
+                else
+                    log "WARN" "Failed to restart containerd via service command"
+                    log "WARN" "This may be due to container security restrictions"
+                    log "INFO" "Containerd configuration has been updated but requires manual restart"
+                    return 2
+                fi
+            else
+                log "WARN" "Neither systemctl nor service command available"
+                log "INFO" "Containerd configuration has been updated but requires manual restart"
+                return 2
+            fi
         else
             log "WARN" "Cannot restart containerd from container without nsenter"
-            log "WARN" "Please restart containerd manually on the host"
-            return 1
+            log "INFO" "Containerd configuration has been updated but requires manual restart"
+            return 2
         fi
     fi
     
-    log "INFO" "Service restart command issued"
-    
-    # Wait for socket to appear
     log "INFO" "Waiting for NRI socket to become available..."
-    for _ in $(seq 1 30); do
+    for i in $(seq 1 30); do
         if [ -S "$NRI_SOCKET_PATH" ]; then
             log "INFO" "NRI socket is now available at $NRI_SOCKET_PATH"
             return 0
+        fi
+        # Check periodically with status updates
+        if [ $((i % 5)) -eq 0 ]; then
+            log "INFO" "Still waiting for NRI socket... ($i/30)"
         fi
         sleep 1
     done
     
     log "WARN" "NRI socket did not appear after restart within 30 seconds"
-    return 1
+    log "INFO" "This may indicate that the service restart requires additional privileges"
+    return 2
 }
 
 # Main execution
@@ -267,14 +312,28 @@ main() {
         
         # Check if we should restart containerd
         if [ "$NRI_RESTART" = "true" ]; then
-            log "INFO" "Restarting containerd/K3s to enable NRI"
+            log "INFO" "Attempting to restart containerd/K3s to enable NRI"
             log "WARN" "This may temporarily affect container management operations"
             
-            if restart_containerd; then
+            restart_containerd
+            restart_result=$?
+            
+            if [ $restart_result -eq 0 ]; then
                 log "INFO" "NRI successfully enabled"
                 log "INFO" "Memory Collector can now access pod and container metadata"
+            elif [ $restart_result -eq 2 ]; then
+                log "INFO" "NRI configuration successfully updated"
+                log "WARN" "Automatic restart not possible due to container security restrictions"
+                log "INFO" "This is expected behavior in most Kubernetes environments"
+                log "INFO" "To complete NRI enablement, restart containerd/K3s manually:"
+                if is_k3s; then
+                    log "INFO" "  sudo systemctl restart k3s  # or k3s-agent"
+                else
+                    log "INFO" "  sudo systemctl restart containerd"
+                fi
+                log "WARN" "Memory Collector will continue without metadata features until restart"
             else
-                log "ERROR" "Failed to enable NRI"
+                log "ERROR" "Failed to configure or restart containerd/K3s"
                 log "WARN" "Memory Collector will continue without metadata features"
             fi
         else
