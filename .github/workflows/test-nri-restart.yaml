@@ -29,7 +29,7 @@ jobs:
           # Create a fake container environment
           sudo touch /.dockerenv
           
-          output=$(sudo bash charts/collector/scripts/nri-init.sh 2>&1 || true)
+          output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
           echo "$output"
           
           # Since we're in a "container", restart should fail gracefully
@@ -56,6 +56,8 @@ jobs:
         run: |
           # Create a mock environment where nsenter would be used
           sudo mkdir -p /host/proc/1/ns
+          # Create a fake mount namespace file
+          sudo touch /host/proc/1/ns/mnt
           
           # Create a test script that checks nsenter usage
           cat > test-nsenter.sh << 'EOF'
@@ -140,7 +142,7 @@ jobs:
           export NRI_CONFIGURE=true
           export NRI_RESTART=false
           
-          output=$(sudo bash charts/collector/scripts/nri-init.sh 2>&1 || true)
+          output=$(sudo -E bash charts/collector/scripts/nri-init.sh 2>&1 || true)
           echo "$output"
           
           # Check that config was modified
