@@ -198,7 +198,7 @@ restart_containerd() {
     
     # Wait for socket to appear
     log "INFO" "Waiting for NRI socket to become available..."
-    for i in $(seq 1 30); do
+    for _ in $(seq 1 30); do
         if [ -S "$NRI_SOCKET_PATH" ]; then
             log "INFO" "NRI socket is now available at $NRI_SOCKET_PATH"
             return 0
