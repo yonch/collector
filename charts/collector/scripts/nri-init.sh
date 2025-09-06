@@ -16,23 +16,52 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
 }
 
-# Check if NRI socket exists
-check_nri_socket() {
-    if [ -S "$NRI_SOCKET_PATH" ]; then
-        log "INFO" "NRI socket found at $NRI_SOCKET_PATH"
-        return 0
-    else
-        log "WARN" "NRI socket not found at $NRI_SOCKET_PATH"
-        return 1
-    fi
-}
-
 # Detect if running on K3s
 is_k3s() {
     if [ -d "/var/lib/rancher/k3s" ]; then
         log "INFO" "K3s installation detected"
         return 0
     else
+        return 1
+    fi
+}
+
+# Check if NRI socket exists and is functional
+check_nri_socket() {
+    if [ -S "$NRI_SOCKET_PATH" ]; then
+        log "INFO" "NRI socket found at $NRI_SOCKET_PATH"
+        
+        # Also check if NRI is enabled in config (socket can exist even when disabled)
+        config_file="/etc/containerd/config.toml"
+        if [ -f "$config_file" ]; then
+            if grep -q 'plugins."io.containerd.nri.v1.nri"' "$config_file"; then
+                if grep -A 5 'plugins."io.containerd.nri.v1.nri"' "$config_file" | grep -q "disable = false"; then
+                    log "INFO" "NRI is enabled in containerd config"
+                    return 0
+                else
+                    log "WARN" "NRI socket exists but NRI is disabled in config"
+                    return 1
+                fi
+            else
+                log "WARN" "NRI socket exists but no NRI config section found"
+                return 1
+            fi
+        fi
+        
+        # If K3s, check its config
+        if is_k3s; then
+            k3s_config="/var/lib/rancher/k3s/agent/etc/containerd/config.toml"
+            if [ -f "$k3s_config" ] && grep -A 5 'plugins."io.containerd.nri.v1.nri"' "$k3s_config" | grep -q "disable = false"; then
+                log "INFO" "NRI is enabled in K3s config"
+                return 0
+            fi
+        fi
+        
+        # Socket exists but can't verify config - assume it's working
+        log "INFO" "NRI socket exists, assuming it's functional"
+        return 0
+    else
+        log "WARN" "NRI socket not found at $NRI_SOCKET_PATH"
         return 1
     fi
 }
