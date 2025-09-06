@@ -99,6 +99,10 @@ jobs:
         run: |
           POD=$(kubectl get pod -l app.kubernetes.io/name=collector -o jsonpath='{.items[0].metadata.name}')
           
+          # Wait for init container to complete
+          echo "=== Waiting for init container to complete ==="
+          kubectl wait --for=condition=Initialized pod/$POD --timeout=60s
+          
           echo "=== NRI Init Container Logs ==="
           kubectl logs $POD -c nri-init
           
