@@ -16,7 +16,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: unvariance/collector/nri-init
+  IMAGE_NAME: ${{ github.repository }}/nri-init
 
 jobs:
   build-and-push:

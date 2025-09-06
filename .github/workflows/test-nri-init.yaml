@@ -61,9 +61,10 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./images/nri-init
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: false
           tags: nri-init:test
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
       

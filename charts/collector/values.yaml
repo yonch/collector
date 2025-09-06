@@ -111,8 +111,9 @@ nri:
   # Init container configuration
   initContainer:
     image:
-      repository: ghcr.io/unvariance/collector/nri-init
-      tag: "latest"
+      # Default to busybox, can be overridden with custom image
+      repository: busybox
+      tag: "1.36"
     securityContext:
       privileged: true
     resources:

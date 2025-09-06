@@ -229,7 +229,7 @@ The Memory Collector requires access to host resources and kernel facilities, wh
 | `extraEnv` | Additional environment variables | `[]` |
 | `nri.configure` | Configure NRI when socket is missing | `true` |
 | `nri.restart` | Restart containerd to enable NRI | `false` |
-| `nri.initContainer.image.repository` | NRI init container image | `ghcr.io/unvariance/collector/nri-init` |
-| `nri.initContainer.image.tag` | NRI init container tag | `latest` |
+| `nri.initContainer.image.repository` | NRI init container image | `busybox` |
+| `nri.initContainer.image.tag` | NRI init container tag | `1.36` |
 | `nri.initContainer.securityContext.privileged` | Run init container as privileged | `true` |
 | `nri.initContainer.resources` | Init container resources | See values.yaml | 
