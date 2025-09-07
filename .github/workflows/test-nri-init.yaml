@@ -63,7 +63,7 @@ jobs:
           context: ./images/nri-init
           platforms: linux/amd64
           push: false
-          tags: nri-init:test
+          tags: nri-init:test # >> we do not want multiple concurrent workflows to interfere, so let's specialize this tag with the runId of the workflow. And can we set a TTL on the image as to free up storage, say 1 day.
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max

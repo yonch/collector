@@ -112,7 +112,7 @@ nri:
   initContainer:
     image:
       # Default to busybox, can be overridden with custom image
-      repository: busybox
+      repository: busybox # >> If we are using busybox, can we remove all the build steps and the Dockerfile that we had initiailly for building the init container? And in all our tests, we should use the same container as the one in the helm chart default
       tag: "1.36"
     securityContext:
       privileged: true

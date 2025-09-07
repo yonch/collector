@@ -14,6 +14,7 @@ log() {
     level=$1
     shift
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $*"
+    # >> Let's log into stderr
 }
 
 # Detect if running on K3s
@@ -71,6 +72,8 @@ configure_containerd() {
     config_file="/etc/containerd/config.toml"
     
     log "INFO" "Configuring NRI for standard containerd at $config_file"
+
+# >> this function uses text manipulation on the config file. Is there a tool for this format, like jq is for JSON, that allows format manipulation?
     
     # Check if containerd config exists
     if [ ! -f "$config_file" ]; then
@@ -88,12 +91,14 @@ version = 2
   plugin_request_timeout = "2s"
   socket_path = "$NRI_SOCKET_PATH"
 EOF
+# >> Our default `[plugins."io.containerd.nri.v1.nri"]` repeats twice -- can we perhaps just write "version = 2" here and then also run the check below to add the nri section?
     else
         # Check if NRI is already configured
         if grep -q 'plugins."io.containerd.nri.v1.nri"' "$config_file"; then
             log "INFO" "NRI section found in config, updating disable flag"
             # Use sed to update the disable flag
             sed -i 's/disable = true/disable = false/g' "$config_file"
+# >> Is whitespace guaranteed to exist and exactly in this way? (around the equals sign)
         else
             log "INFO" "Adding NRI configuration to existing config"
             # Append NRI configuration
@@ -119,6 +124,8 @@ configure_k3s() {
     template_file="/var/lib/rancher/k3s/agent/etc/containerd/config.toml.tmpl"
     
     log "INFO" "Configuring NRI for K3s at $template_file"
+
+# >> See comments above
     
     # Check if template exists
     if [ ! -f "$template_file" ]; then
@@ -189,6 +196,7 @@ restart_containerd() {
     elif [ -e /proc/1/ns/mnt ] && [ "$(readlink /proc/1/ns/mnt)" != "$(readlink /proc/self/ns/mnt)" ]; then
         NSENTER="nsenter --target 1 --mount --uts --ipc --net --pid --"
         log "INFO" "Using nsenter to execute commands on host"
+        # >> This has the same side effect as the outcome of the first if, can we compute an OR between the two conditions and not repeat this?
     fi
     
     if is_k3s; then

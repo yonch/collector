@@ -1,3 +1,4 @@
+# >> This whole flow seems redundant with test-nri-init.yaml, let's remove
 name: Test NRI Restart Functionality
 
 on:
