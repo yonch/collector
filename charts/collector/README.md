@@ -1,6 +1,6 @@
 # Unvariance Collector Helm Chart
 
-This Helm chart deploys the Unvariance Collector, an eBPF-based tool that collects memory subsystem metrics and writes them to Parquet files in object storage.
+This Helm chart deploys the Unvariance Collector, an eBPF-based tool for collecting high-resolution memory subsystem metrics in Kubernetes clusters.
 
 ## Installation
 
@@ -155,6 +155,20 @@ resources:
     memory: 128Mi
 ```
 
+### NRI (Node Resource Interface) Configuration
+
+The collector uses NRI to access pod and container metadata. NRI is disabled by default in containerd < 2.0. The chart includes an init container to check and optionally configure NRI:
+
+```yaml
+nri:
+  configure: false # Default: detection-only (safest)
+  restart: false   # Restart containerd to apply changes (may impact availability)
+```
+
+For detailed NRI setup instructions, see the [NRI Setup Guide](../../docs/nri-setup.md).
+
+Recommended production rollout: use a rolling, label-based update to enable NRI safely in batches. See the NRI guide for step-by-step commands.
+
 ## Pod Security Standards Compatibility
 
 The Memory Collector requires access to host resources and kernel facilities, which means it's not compatible with the "restricted" Pod Security Standard. It should be compatible with the "baseline" standard if running with the minimum required capabilities, or may require the "privileged" standard when run with privileged: true.
@@ -201,4 +215,13 @@ The Memory Collector requires access to host resources and kernel facilities, wh
 | `resources` | Pod resource requests and limits | See values.yaml |
 | `podAnnotations` | Additional pod annotations | `{}` |
 | `podLabels` | Additional pod labels | `{}` |
-| `extraEnv` | Additional environment variables | `[]` | 
+| `extraEnv` | Additional environment variables | `[]` |
+| `nri.configure` | Configure NRI when socket is missing | `false` |
+| `nri.restart` | Restart containerd to enable NRI | `false` |
+| `nri.failIfUnavailable` | Fail init if NRI unavailable | `false` |
+| `nri.init.image.repository` | Init image repository | `ghcr.io/unvariance/nri-init` |
+| `nri.init.image.tag` | Init image tag | `latest` |
+| `nri.init.image.pullPolicy` | Init image pull policy | `IfNotPresent` |
+| `nri.init.command` | Init command | `["/bin/nri-init"]` |
+| `nri.init.securityContext.privileged` | Run init as privileged | `true` |
+| `nri.init.resources` | Init container resources | See values.yaml |

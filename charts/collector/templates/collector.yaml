@@ -24,6 +24,9 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if .Values.nri.restart }}
+      hostPID: true
+      {{- end }}
       {{- if ne $mode "all" }}
       # Use pod anti-affinity to ensure no more than one collector per node
       affinity:
@@ -58,6 +61,32 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        - name: nri-init
+          image: "{{ .Values.nri.init.image.repository }}:{{ .Values.nri.init.image.tag }}"
+          imagePullPolicy: {{ .Values.nri.init.image.pullPolicy | default "IfNotPresent" }}
+          securityContext:
+            {{- toYaml .Values.nri.init.securityContext | nindent 12 }}
+          command: {{ toYaml .Values.nri.init.command | nindent 12 }}
+          env:
+            - name: NRI_CONFIGURE
+              value: "{{ .Values.nri.configure }}"
+            - name: NRI_RESTART
+              value: "{{ .Values.nri.restart }}"
+            - name: NRI_FAIL_IF_UNAVAILABLE
+              value: "{{ .Values.nri.failIfUnavailable | default false }}"
+          resources:
+            {{- toYaml .Values.nri.init.resources | nindent 12 }}
+          volumeMounts:
+            - name: etc-containerd
+              mountPath: /etc/containerd
+            - name: var-lib-rancher
+              mountPath: /var/lib/rancher
+            - name: var-run
+              mountPath: /var/run
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
@@ -115,6 +144,22 @@ spec:
         - name: data-volume
           emptyDir: {}
         {{- end }}
+        - name: etc-containerd
+          hostPath:
+            path: /etc/containerd
+            type: DirectoryOrCreate
+        - name: var-lib-rancher
+          hostPath:
+            path: /var/lib/rancher
+            type: DirectoryOrCreate
+        - name: var-run
+          hostPath:
+            path: /var/run
+            type: Directory
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory
         - name: sys-kernel-debug
           hostPath:
             path: /sys/kernel/debug

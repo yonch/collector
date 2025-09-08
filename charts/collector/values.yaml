@@ -99,4 +99,28 @@ podAnnotations: {}
 podLabels: {}
 
 # Additional environment variables
-extraEnv: [] 
+extraEnv: []
+
+# NRI (Node Resource Interface) configuration
+# NRI enables the collector to access pod and container metadata
+nri:
+  # Whether to configure NRI when socket is missing
+  configure: false
+  # Whether to restart containerd after configuration (requires maintenance window)
+  restart: false
+  # Whether to fail if NRI is unavailable (useful for testing)
+  failIfUnavailable: false
+  # Init container image
+  init:
+    image:
+      repository: ghcr.io/unvariance/nri-init
+      tag: latest
+      pullPolicy: IfNotPresent
+    command: ["/bin/nri-init"]
+    securityContext:
+      privileged: true
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  # No script-based init container supported anymore
