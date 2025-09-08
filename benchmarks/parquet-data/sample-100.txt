@@ -1,0 +1,100 @@
+{start_time: 201881000000, pid: 18695, process_name: "envoy", cycles: 123095, instructions: 54359, llc_misses: 204, duration: 48361}
+{start_time: 225008000000, pid: 18695, process_name: "envoy", cycles: 198793, instructions: 68972, llc_misses: 868, duration: 88965}
+{start_time: 226000000000, pid: 0, process_name: null, cycles: 2869875, instructions: 1236291, llc_misses: 2210, duration: 33184889}
+{start_time: 229572000000, pid: 18756, process_name: "envoy", cycles: 662838, instructions: 167918, llc_misses: 4553, duration: 198514}
+{start_time: 237204000000, pid: 19944, process_name: "next-server (v1", cycles: 3309649, instructions: 1960104, llc_misses: 18574, duration: 999319}
+{start_time: 247484000000, pid: 23800, process_name: "locust", cycles: 3222140, instructions: 5416871, llc_misses: 244, duration: 999941}
+{start_time: 253760000000, pid: 2244, process_name: "containerd", cycles: 284565, instructions: 114886, llc_misses: 610, duration: 103101}
+{start_time: 257504000000, pid: 84, process_name: null, cycles: 69851, instructions: 29792, llc_misses: 266, duration: 27143}
+{start_time: 261497000000, pid: 24062, process_name: "locust", cycles: 3346348, instructions: 6175412, llc_misses: 604, duration: 999782}
+{start_time: 272523000000, pid: 19944, process_name: "next-server (v1", cycles: 3827513, instructions: 1890897, llc_misses: 15205, duration: 1163876}
+{start_time: 282104000000, pid: 13411, process_name: "containerd-shim", cycles: 347941, instructions: 98249, llc_misses: 1320, duration: 129011}
+{start_time: 289049000000, pid: 18146, process_name: "python", cycles: 3354595, instructions: 7192059, llc_misses: 7323, duration: 1000348}
+{start_time: 297265000000, pid: 15527, process_name: "node", cycles: 4952946, instructions: 8949046, llc_misses: 12696, duration: 1488208}
+{start_time: 297712000000, pid: 24238, process_name: "locust", cycles: 3217592, instructions: 3652954, llc_misses: 665, duration: 1000902}
+{start_time: 302146000000, pid: 24062, process_name: "locust", cycles: 935880, instructions: 380205, llc_misses: 2106, duration: 279160}
+{start_time: 306411000000, pid: 24150, process_name: "locust", cycles: 824419, instructions: 342562, llc_misses: 2399, duration: 245648}
+{start_time: 311319000000, pid: 24150, process_name: "locust", cycles: 59645, instructions: 14408, llc_misses: 254, duration: 20549}
+{start_time: 317638000000, pid: 23754, process_name: "locust", cycles: 3344141, instructions: 3446149, llc_misses: 1078, duration: 1001342}
+{start_time: 318225000000, pid: 19980, process_name: "next-server (v1", cycles: 1456498, instructions: 427025, llc_misses: 11299, duration: 432887}
+{start_time: 318844000000, pid: 19980, process_name: "next-server (v1", cycles: 4598556, instructions: 2339945, llc_misses: 15589, duration: 1429668}
+{start_time: 319385000000, pid: 23844, process_name: "locust", cycles: 3289456, instructions: 1928413, llc_misses: 9028, duration: 1019358}
+{start_time: 320373000000, pid: 2201, process_name: "k3s-server", cycles: 218341, instructions: 78123, llc_misses: 535, duration: 77498}
+{start_time: 320874000000, pid: 18001, process_name: "php", cycles: 3202691, instructions: 1130627, llc_misses: 13087, duration: 971539}
+{start_time: 323890000000, pid: 21833, process_name: "checkout", cycles: 92386, instructions: 28074, llc_misses: 278, duration: 38350}
+{start_time: 334740000000, pid: 24150, process_name: "locust", cycles: 1811195, instructions: 622793, llc_misses: 5187, duration: 560477}
+{start_time: 334909000000, pid: 24194, process_name: "locust", cycles: 3348147, instructions: 5841865, llc_misses: 1119, duration: 999925}
+{start_time: 336568000000, pid: 2201, process_name: "k3s-server", cycles: 48534, instructions: 11003, llc_misses: 171, duration: 18238}
+{start_time: 338745000000, pid: 18146, process_name: "python", cycles: 319040, instructions: 155736, llc_misses: 790, duration: 105125}
+{start_time: 342926000000, pid: 19491, process_name: "java", cycles: 3349242, instructions: 3072318, llc_misses: 7211, duration: 1000671}
+{start_time: 348525000000, pid: 21833, process_name: "checkout", cycles: 1410190, instructions: 522535, llc_misses: 3889, duration: 490628}
+{start_time: 348768000000, pid: 14753, process_name: "currency", cycles: 2312726, instructions: 653121, llc_misses: 5178, duration: 753763}
+{start_time: 351065000000, pid: 14228, process_name: "valkey-server", cycles: 522284, instructions: 194597, llc_misses: 1619, duration: 164103}
+{start_time: 357170000000, pid: 15527, process_name: "node", cycles: 1426460, instructions: 238434, llc_misses: 7804, duration: 436531}
+{start_time: 358200000000, pid: 0, process_name: null, cycles: 3585785, instructions: 1494919, llc_misses: 6938, duration: 15134016}
+{start_time: 358579000000, pid: 23671, process_name: "locust", cycles: 600899, instructions: 301883, llc_misses: 2456, duration: 180065}
+{start_time: 359625000000, pid: 23930, process_name: "locust", cycles: 649184, instructions: 159118, llc_misses: 2832, duration: 204791}
+{start_time: 365628000000, pid: 18722, process_name: "envoy", cycles: 1319887, instructions: 457834, llc_misses: 3953, duration: 423874}
+{start_time: 366333000000, pid: 24282, process_name: "locust", cycles: 528501, instructions: 160007, llc_misses: 1790, duration: 164398}
+{start_time: 373674000000, pid: 2244, process_name: "containerd", cycles: 2864621, instructions: 1117268, llc_misses: 4456, duration: 1059341}
+{start_time: 373783000000, pid: 23630, process_name: "locust", cycles: 1283488, instructions: 411959, llc_misses: 6670, duration: 387612}
+{start_time: 376756000000, pid: 14113, process_name: "currency", cycles: 3254347, instructions: 854507, llc_misses: 10780, duration: 1019717}
+{start_time: 382443000000, pid: 6475, process_name: "containerd-shim", cycles: 177258, instructions: 54225, llc_misses: 279, duration: 71717}
+{start_time: 382805000000, pid: 18642, process_name: "cart", cycles: 2841562, instructions: 1212879, llc_misses: 6641, duration: 1200521}
+{start_time: 390655000000, pid: 18146, process_name: "python", cycles: 1708783, instructions: 890080, llc_misses: 6720, duration: 547995}
+{start_time: 394665000000, pid: 23844, process_name: "locust", cycles: 3344344, instructions: 1717229, llc_misses: 12376, duration: 999905}
+{start_time: 395001000000, pid: 18553, process_name: "cart", cycles: 3871635, instructions: 1818530, llc_misses: 4353, duration: 1476125}
+{start_time: 395717000000, pid: 18027, process_name: "flagd-build", cycles: 517158, instructions: 158675, llc_misses: 1959, duration: 177712}
+{start_time: 397872000000, pid: 18182, process_name: "ruby", cycles: 3301955, instructions: 1461192, llc_misses: 9113, duration: 997160}
+{start_time: 400094000000, pid: 20012, process_name: "next-server (v1", cycles: 3160471, instructions: 1162729, llc_misses: 7956, duration: 984227}
+{start_time: 401524000000, pid: 13747, process_name: "containerd-shim", cycles: 407377, instructions: 137775, llc_misses: 1312, duration: 139734}
+{start_time: 402903000000, pid: 19829, process_name: "next-server (v1", cycles: 468465, instructions: 94843, llc_misses: 1422, duration: 170063}
+{start_time: 406098000000, pid: 20012, process_name: "next-server (v1", cycles: 3217499, instructions: 1584765, llc_misses: 13290, duration: 967326}
+{start_time: 414228000000, pid: 24150, process_name: "locust", cycles: 3311430, instructions: 3847487, llc_misses: 2740, duration: 1003051}
+{start_time: 415866000000, pid: 18642, process_name: "cart", cycles: 2164498, instructions: 656189, llc_misses: 8895, duration: 701364}
+{start_time: 417255000000, pid: 20034, process_name: "next-server (v1", cycles: 491621, instructions: 162318, llc_misses: 1970, duration: 153874}
+{start_time: 419506000000, pid: 13411, process_name: "containerd-shim", cycles: 171626, instructions: 38780, llc_misses: 381, duration: 147316}
+{start_time: 426611000000, pid: 14113, process_name: "currency", cycles: 2461159, instructions: 685530, llc_misses: 7671, duration: 854528}
+{start_time: 431506000000, pid: 23930, process_name: "locust", cycles: 1672375, instructions: 621393, llc_misses: 5342, duration: 515381}
+{start_time: 435105000000, pid: 23886, process_name: "locust", cycles: 2937993, instructions: 1170882, llc_misses: 9623, duration: 959011}
+{start_time: 435483000000, pid: 6726, process_name: "containerd-shim", cycles: 185531, instructions: 54483, llc_misses: 353, duration: 70525}
+{start_time: 436508000000, pid: 18182, process_name: "ruby", cycles: 2529213, instructions: 846926, llc_misses: 9422, duration: 881506}
+{start_time: 441177000000, pid: 18146, process_name: "python", cycles: 3352306, instructions: 2049014, llc_misses: 10758, duration: 1178994}
+{start_time: 442074000000, pid: 23712, process_name: "locust", cycles: 1095234, instructions: 349627, llc_misses: 3737, duration: 325728}
+{start_time: 444295000000, pid: 20060, process_name: "next-server (v1", cycles: 3012055, instructions: 1282976, llc_misses: 14874, duration: 999734}
+{start_time: 445044000000, pid: 20012, process_name: "next-server (v1", cycles: 317912, instructions: 62514, llc_misses: 928, duration: 97965}
+{start_time: 447841000000, pid: 8215, process_name: "containerd-shim", cycles: 26112, instructions: 10088, llc_misses: 27, duration: 11388}
+{start_time: 448334000000, pid: 18694, process_name: "envoy", cycles: 444224, instructions: 115084, llc_misses: 1797, duration: 224198}
+{start_time: 448395000000, pid: 19897, process_name: "next-server (v1", cycles: 2999011, instructions: 1931959, llc_misses: 15529, duration: 967700}
+{start_time: 451252000000, pid: 7218, process_name: "containerd-shim", cycles: 192772, instructions: 55726, llc_misses: 609, duration: 74392}
+{start_time: 453219000000, pid: 18695, process_name: "envoy", cycles: 123828, instructions: 43321, llc_misses: 302, duration: 44791}
+{start_time: 455258000000, pid: 23886, process_name: "locust", cycles: 3123843, instructions: 6182194, llc_misses: 5047, duration: 1001002}
+{start_time: 456263000000, pid: 19491, process_name: "java", cycles: 1357459, instructions: 371741, llc_misses: 14441, duration: 519861}
+{start_time: 458803000000, pid: 2244, process_name: "containerd", cycles: 1396539, instructions: 617847, llc_misses: 2202, duration: 497333}
+{start_time: 460533000000, pid: 20042, process_name: "next-server (v1", cycles: 2875166, instructions: 781396, llc_misses: 13566, duration: 966279}
+{start_time: 460706000000, pid: 14753, process_name: "currency", cycles: 1628459, instructions: 447053, llc_misses: 6217, duration: 503033}
+{start_time: 461869000000, pid: 18553, process_name: "cart", cycles: 2383742, instructions: 1119026, llc_misses: 2294, duration: 1212793}
+{start_time: 461896000000, pid: 21831, process_name: "checkout", cycles: 1761083, instructions: 589605, llc_misses: 6087, duration: 601634}
+{start_time: 462442000000, pid: 19944, process_name: "next-server (v1", cycles: 377487, instructions: 72464, llc_misses: 1831, duration: 115265}
+{start_time: 463791000000, pid: 20008, process_name: "next-server (v1", cycles: 316457, instructions: 45765, llc_misses: 2052, duration: 191505}
+{start_time: 464552000000, pid: 20060, process_name: "next-server (v1", cycles: 2954834, instructions: 1067537, llc_misses: 13763, duration: 1001324}
+{start_time: 466444000000, pid: 14113, process_name: "currency", cycles: 2383744, instructions: 582721, llc_misses: 6923, duration: 868035}
+{start_time: 468968000000, pid: 19840, process_name: "next-server (v1", cycles: 2960382, instructions: 860635, llc_misses: 13552, duration: 997957}
+{start_time: 469274000000, pid: 19897, process_name: "next-server (v1", cycles: 3099637, instructions: 2030095, llc_misses: 16785, duration: 1000071}
+{start_time: 469926000000, pid: 19794, process_name: "next-server (v1", cycles: 3796083, instructions: 1335252, llc_misses: 19132, duration: 1253548}
+{start_time: 470095000000, pid: 14228, process_name: "valkey-server", cycles: 312995, instructions: 101505, llc_misses: 693, duration: 104354}
+{start_time: 470482000000, pid: 24238, process_name: "locust", cycles: 3406467, instructions: 3099849, llc_misses: 4177, duration: 1100155}
+{start_time: 472662000000, pid: 19980, process_name: "next-server (v1", cycles: 2765652, instructions: 2833442, llc_misses: 12072, duration: 930942}
+{start_time: 475898000000, pid: 23712, process_name: "locust", cycles: 427085, instructions: 140027, llc_misses: 1113, duration: 129379}
+{start_time: 478693000000, pid: 21831, process_name: "checkout", cycles: 1663523, instructions: 568798, llc_misses: 3416, duration: 582551}
+{start_time: 479670000000, pid: 19979, process_name: "next-server (v1", cycles: 3305298, instructions: 991839, llc_misses: 18530, duration: 1023575}
+{start_time: 480637000000, pid: 10767, process_name: "containerd-shim", cycles: 223202, instructions: 54901, llc_misses: 654, duration: 89133}
+{start_time: 482256000000, pid: 14753, process_name: "currency", cycles: 222582, instructions: 64437, llc_misses: 185, duration: 81447}
+{start_time: 482752000000, pid: 2244, process_name: "containerd", cycles: 1323495, instructions: 604445, llc_misses: 1950, duration: 495002}
+{start_time: 487563000000, pid: 23587, process_name: "pidstat", cycles: 631761, instructions: 458478, llc_misses: 512, duration: 207205}
+{start_time: 488714000000, pid: 6475, process_name: "containerd-shim", cycles: 162729, instructions: 38173, llc_misses: 491, duration: 57650}
+{start_time: 493479000000, pid: 10238, process_name: "containerd-shim", cycles: 219581, instructions: 47687, llc_misses: 580, duration: 79398}
+{start_time: 495246000000, pid: 19957, process_name: "next-server (v1", cycles: 3396477, instructions: 1606045, llc_misses: 11754, duration: 1057261}
+{start_time: 495480000000, pid: 19794, process_name: "next-server (v1", cycles: 3378954, instructions: 4469933, llc_misses: 21035, duration: 1021092}
+{start_time: 498440000000, pid: 22969, process_name: "collector", cycles: 6183544, instructions: 5200164, llc_misses: 13700, duration: 1934512}
+{start_time: 498958000000, pid: 19957, process_name: "next-server (v1", cycles: 3160269, instructions: 2653115, llc_misses: 5063, duration: 966155}

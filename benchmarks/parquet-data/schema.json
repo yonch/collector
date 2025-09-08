@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "num_rows": 9603820,
+  "created_by": "parquet-rs version 55.0.0",
+  "metadata": {
+    "ARROW:schema": "/////9gBAAAQAAAAAAAKAAwACgAJAAQACgAAABAAAAAAAQQACAAIAAAABAAIAAAABAAAAAcAAABsAQAALAEAAPQAAACwAAAAdAAAADwAAAAEAAAAwP7//xAAAAAYAAAAAAAAAhQAAACw/v//QAAAAAAAAAEAAAAACAAAAGR1cmF0aW9uAAAAAPT+//8QAAAAGAAAAAAAAAIUAAAA5P7//0AAAAAAAAABAAAAAAoAAABsbGNfbWlzc2VzAAAo////EAAAABgAAAAAAAACFAAAABj///9AAAAAAAAAAQAAAAAMAAAAaW5zdHJ1Y3Rpb25zAAAAAGD///8QAAAAGAAAAAAAAAIUAAAAUP///0AAAAAAAAABAAAAAAYAAABjeWNsZXMAABAAFAAQAA4ADwAEAAAACAAQAAAAGAAAAAwAAAAAAAEFEAAAAAAAAAAEAAQABAAAAAwAAABwcm9jZXNzX25hbWUAAAAA1P///xAAAAAYAAAAAAAAAhQAAADE////IAAAAAAAAAEAAAAAAwAAAHBpZAAQABQAEAAAAA8ABAAAAAgAEAAAABgAAAAgAAAAAAAAAhwAAAAIAAwABAALAAgAAABAAAAAAAAAAQAAAAAKAAAAc3RhcnRfdGltZQAA"
+  },
+  "columns": [
+    {
+      "physical_type": "INT64",
+      "converted_type": "NONE",
+      "path": "start_time",
+      "optional": "false",
+      "name": "start_time"
+    },
+    {
+      "physical_type": "INT32",
+      "converted_type": "NONE",
+      "path": "pid",
+      "name": "pid",
+      "optional": "false"
+    },
+    {
+      "optional": "true",
+      "physical_type": "BYTE_ARRAY",
+      "name": "process_name",
+      "converted_type": "UTF8",
+      "path": "process_name"
+    },
+    {
+      "path": "cycles",
+      "optional": "false",
+      "converted_type": "NONE",
+      "name": "cycles",
+      "physical_type": "INT64"
+    },
+    {
+      "physical_type": "INT64",
+      "name": "instructions",
+      "path": "instructions",
+      "converted_type": "NONE",
+      "optional": "false"
+    },
+    {
+      "physical_type": "INT64",
+      "path": "llc_misses",
+      "optional": "false",
+      "converted_type": "NONE",
+      "name": "llc_misses"
+    },
+    {
+      "converted_type": "NONE",
+      "path": "duration",
+      "optional": "false",
+      "name": "duration",
+      "physical_type": "INT64"
+    }
+  ],
+  "message": "message arrow_schema {\n  REQUIRED INT64 start_time;\n  REQUIRED INT32 pid;\n  OPTIONAL BYTE_ARRAY process_name (STRING);\n  REQUIRED INT64 cycles;\n  REQUIRED INT64 instructions;\n  REQUIRED INT64 llc_misses;\n  REQUIRED INT64 duration;\n}\n"
+}
