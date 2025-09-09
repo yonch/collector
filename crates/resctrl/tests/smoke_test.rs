@@ -1,4 +1,4 @@
-use resctrl::{AssignmentResult, Resctrl};
+use resctrl::{AssignmentResult, Config, Error, Resctrl};
 use std::process::Command;
 
 fn try_mount_resctrl() -> std::io::Result<()> {
@@ -17,9 +17,29 @@ fn try_mount_resctrl() -> std::io::Result<()> {
     if stderr.to_lowercase().contains("busy") || stderr.to_lowercase().contains("mounted") {
         return Ok(());
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        format!("mount resctrl failed: status {:?}, err: {}", status.code(), stderr),
+    Err(std::io::Error::other(format!(
+        "mount resctrl failed: status {:?}, err: {}",
+        status.code(),
+        stderr
+    )))
+}
+
+fn try_umount_resctrl() -> std::io::Result<()> {
+    // Attempt to unmount resctrl; treat "not mounted" as success
+    let status = Command::new("umount").arg("/sys/fs/resctrl").status()?;
+    if status.success() {
+        return Ok(());
+    }
+    // Check /proc/mounts; if not present, consider unmounted
+    let mounted = std::fs::read_to_string("/proc/mounts")
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l.split_whitespace().nth(2) == Some("resctrl"));
+    if !mounted {
+        return Ok(());
+    }
+    Err(std::io::Error::other(
+        "umount /sys/fs/resctrl failed and resctrl still mounted",
     ))
 }
 
@@ -31,7 +51,38 @@ fn resctrl_smoke() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // First, validate detection and ensure_mounted behavior (mounted/unmounted paths)
     let rc = Resctrl::default();
+    // Force unmounted state; fail if we cannot unmount.
+    try_umount_resctrl()?;
+    let info_unmounted = rc.detect_support()?;
+    if info_unmounted.mounted {
+        return Err(anyhow::anyhow!(
+            "expected resctrl unmounted after umount, but detect reported mounted"
+        ));
+    }
+    // ensure_mounted should fail with auto_mount=false
+    let rc_no_auto = Resctrl::new(Config { auto_mount: false, ..Default::default() });
+    match rc_no_auto.ensure_mounted() {
+        Err(Error::NotMounted { .. }) => {}
+        other => return Err(anyhow::anyhow!("expected NotMounted, got: {other:?}")),
+    }
+    // Now with auto_mount=true it should mount successfully
+    let rc_auto = Resctrl::new(Config { auto_mount: true, ..Default::default() });
+    rc_auto.ensure_mounted()?;
+    let info_after = rc_auto.detect_support()?;
+    if !info_after.mounted {
+        return Err(anyhow::anyhow!(
+            "ensure_mounted succeeded but detect shows not mounted"
+        ));
+    }
+    if !info_after.writable {
+        return Err(anyhow::anyhow!(
+            "resctrl mounted but root tasks file not writable by test process"
+        ));
+    }
+    // Verify calling ensure_mounted again when already mounted is a no-op and succeeds
+    rc_auto.ensure_mounted()?;
     let uid = format!("smoke_{}", uuid::Uuid::new_v4());
 
     let group = match rc.create_group(&uid) {
@@ -49,24 +100,28 @@ fn resctrl_smoke() -> anyhow::Result<()> {
     if assigned != 1 || missing != 0 {
         return Err(anyhow::anyhow!(
             "unexpected assignment result: assigned={}, missing={}",
-            assigned, missing
+            assigned,
+            missing
         ));
     }
 
     let tasks = rc.list_group_tasks(&group)?;
-    if !tasks.iter().any(|p| *p == pid) {
+    if !tasks.contains(&pid) {
         return Err(anyhow::anyhow!(
             "pid {} not found in group task list: {:?}",
-            pid, tasks
+            pid,
+            tasks
         ));
     }
 
     // Detach and cleanup
     let AssignmentResult { assigned, .. } = rc.assign_tasks("/sys/fs/resctrl", &[pid])?;
     if assigned != 1 {
-        eprintln!("warning: could not detach pid {} back to root (assigned={})", pid, assigned);
+        eprintln!(
+            "warning: could not detach pid {} back to root (assigned={})",
+            pid, assigned
+        );
     }
     rc.delete_group(&group)?;
     Ok(())
 }
-

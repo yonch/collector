@@ -42,6 +42,16 @@ jobs:
           rustc -V
           cargo -V
 
+      - name: Install clippy component
+        run: |
+          source $HOME/.cargo/env
+          rustup component add clippy
+
+      - name: Clippy (resctrl)
+        run: |
+          source $HOME/.cargo/env
+          cargo clippy -p resctrl --all-targets -- -D warnings
+
       - name: Run unit tests (no hardware)
         run: |
           source $HOME/.cargo/env
@@ -53,6 +63,7 @@ jobs:
           source $HOME/.cargo/env
           # Build only the hardware smoke integration test binary
           cargo test -p resctrl --test smoke_test --release --no-run
+
 
       - name: Collect smoke test binary
         id: collect-bin
@@ -74,6 +85,7 @@ jobs:
           name: resctrl-smoke-bin
           path: resctrl-smoke
           if-no-files-found: error
+
 
   setup-runner:
     name: Start EC2 runner (resctrl-capable)
@@ -111,19 +123,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure resctrl is mounted
-        shell: bash
-        run: |
-          set -euxo pipefail
-          if ! grep -q "/sys/fs/resctrl" /proc/mounts; then
-            mount -t resctrl resctrl /sys/fs/resctrl
-          fi
-
       - name: Download smoke binary
         uses: actions/download-artifact@v4
         with:
           name: resctrl-smoke-bin
           path: ./
+
+      # All detection and ensure_mounted checks are now part of the smoke test itself
 
       - name: Run resctrl smoke test (hardware)
         shell: bash
