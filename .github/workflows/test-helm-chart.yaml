@@ -346,8 +346,12 @@ jobs:
             echo "Setting up aggregated mode field verification..."
             REQUIRED_FIELDS=("pid" "start_time" "cgroup_id" "cache_references" "cycles" "instructions" "llc_misses")
           fi
+
+          # NRI enrichment fields are expected in both modes (nullable)
+          ENRICH_FIELDS=("pod_name" "pod_namespace" "pod_uid" "container_name" "container_id")
+          REQUIRED_FIELDS+=("${ENRICH_FIELDS[@]}")
           
-          # Verify all required fields are present in schema
+          # Verify all required fields are present in schema (including NRI enrichment)
           echo "Verifying required fields in schema..."
           for field in "${REQUIRED_FIELDS[@]}"; do
             if ! grep -q "$field" schema.txt; then
@@ -389,6 +393,7 @@ jobs:
           done
           
           echo "Parquet file verification completed successfully for ${{ matrix.trace-mode == true && 'trace' || 'aggregated' }} mode"
+
 
   stop-runner:
     name: Stop EC2 runner

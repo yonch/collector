@@ -212,3 +212,63 @@ pub mod types {
 // Include examples
 #[cfg(feature = "examples")]
 pub mod examples;
+
+/// Compute the full cgroups path from container and pod information.
+///
+/// The container.linux.cgroups_path contains a colon-delimited string like:
+/// "kubelet-kubepods-besteffort-podef89bdb6_d5d3_4396_9ed2_3a2006e0b6aa.slice:cri-containerd:cafbf51befe66f13ea3ece8780e7a7f711893d6fba12ddd5d689642fcdeba9b9"
+///
+/// The pod.linux.cgroup_parent contains the parent path like:
+/// "/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-podef89bdb6_d5d3_4396_9ed2_3a2006e0b6aa.slice"
+/// or sometimes with the prefix already:
+/// "/sys/fs/cgroup/kubelet.slice/kubelet-kubepods.slice/kubelet-kubepods-besteffort.slice/kubelet-kubepods-besteffort-podef89bdb6_d5d3_4396_9ed2_3a2006e0b6aa.slice"
+///
+/// We need to extract the second and third parts from the container path and combine them as:
+/// "/sys/fs/cgroup" (if not present) + pod.linux.cgroup_parent + "/" + second_part + "-" + third_part + ".scope"
+pub fn compute_full_cgroup_path(
+    container: &api::Container,
+    pod: Option<&api::PodSandbox>,
+) -> String {
+    // Get the container's cgroups path
+    let container_cgroups_path = container
+        .linux
+        .as_ref()
+        .map(|linux| linux.cgroups_path.as_str())
+        .unwrap_or("");
+
+    // Get the pod's cgroup parent
+    let pod_cgroup_parent = pod
+        .and_then(|p| p.linux.as_ref())
+        .map(|linux| linux.cgroup_parent.as_str())
+        .unwrap_or("");
+
+    // Early return if there's no cgroup information at all
+    if container_cgroups_path.is_empty() && pod_cgroup_parent.is_empty() {
+        return String::new();
+    }
+
+    // Helper to ensure a path is rooted at /sys/fs/cgroup without duplicating slashes
+    fn ensure_cgroup_prefix(path: &str) -> String {
+        if path.starts_with("/sys/fs/cgroup") {
+            path.to_string()
+        } else if path.starts_with('/') {
+            format!("/sys/fs/cgroup{}", path)
+        } else {
+            format!("/sys/fs/cgroup/{}", path)
+        }
+    }
+
+    // Parse the container cgroups path (colon-delimited)
+    let parts: Vec<&str> = container_cgroups_path.split(':').collect();
+
+    // Preferred construction when we have both pod parent and container runtime/id
+    if parts.len() >= 3 && !pod_cgroup_parent.is_empty() {
+        let runtime = parts[1]; // e.g., "cri-containerd"
+        let container_id = parts[2]; // e.g., "cafb..."
+        let full_parent = ensure_cgroup_prefix(pod_cgroup_parent);
+        return format!("{}/{}-{}.scope", full_parent, runtime, container_id);
+    }
+
+    // Fallback: return container path (already absolute) with the cgroup prefix if missing
+    ensure_cgroup_prefix(container_cgroups_path)
+}
