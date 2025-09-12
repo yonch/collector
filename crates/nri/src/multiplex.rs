@@ -83,7 +83,6 @@ const MAX_PAYLOAD_SIZE: usize = TTRPC_MESSAGE_HEADER_LENGTH + TTRPC_MESSAGE_LENG
 ///     Ok(())
 /// }
 /// ```
-
 /// A request to write data to the underlying socket.
 struct WriteRequest {
     conn_id: ConnID,
@@ -134,6 +133,12 @@ pub struct Mux {
 }
 
 /// MuxSocket represents a logical connection within the multiplexer.
+// Reduce type complexity for clippy by aliasing the nested future type
+type ReservePermitFuture = Pin<
+    Box<dyn Future<Output = std::result::Result<(), mpsc::error::SendError<()>>> + Send>,
+>;
+type PendingPermit = Option<Mutex<ReservePermitFuture>>;
+
 pub struct MuxSocket {
     /// The connection ID for this socket.
     conn_id: ConnID,
@@ -148,15 +153,7 @@ pub struct MuxSocket {
     /// Whether this socket has been closed.
     closed: bool,
     /// Pending permit reservation future, if any.
-    pending_permit: Option<
-        Mutex<
-            Pin<
-                Box<
-                    dyn Future<Output = std::result::Result<(), mpsc::error::SendError<()>>> + Send,
-                >,
-            >,
-        >,
-    >,
+    pending_permit: PendingPermit,
 }
 
 impl Mux {
@@ -208,7 +205,7 @@ impl Mux {
                             error!("Reader error: {}", e);
                             // Create a new error rather than moving the original
                             let err_msg = e.to_string();
-                            Err(MuxError::Read(io::Error::new(ErrorKind::Other, err_msg)))
+                            Err(MuxError::Read(io::Error::other(err_msg)))
                         }
                         Err(e) => {
                             error!("Reader task panicked: {}", e);
@@ -230,7 +227,7 @@ impl Mux {
                             error!("Writer error: {}", e);
                             // Create a new error rather than moving the original
                             let err_msg = e.to_string();
-                            Err(MuxError::Write(io::Error::new(ErrorKind::Other, err_msg)))
+                            Err(MuxError::Write(io::Error::other(err_msg)))
                         }
                         Err(e) => {
                             error!("Writer task panicked: {}", e);
@@ -287,9 +284,8 @@ impl Mux {
                 maybe_request = write_rx.recv() => {
                     match maybe_request {
                         Some(request) => {
-                            if let Err(e) = Self::write_frame(&mut writer, request).await {
-                                return Err(e);
-                            }
+                            // Propagate errors using the ? operator
+                            Self::write_frame(&mut writer, request).await?;
                         }
                         None => {
                             // Write channel closed, exit
@@ -638,14 +634,9 @@ impl AsyncWrite for MuxSocket {
         let future = self.close();
         futures::pin_mut!(future);
 
-        future.poll_unpin(cx).map(|result| {
-            result.map_err(|e| {
-                io::Error::new(
-                    ErrorKind::Other,
-                    format!("Failed to close connection: {}", e),
-                )
-            })
-        })
+        future
+            .poll_unpin(cx)
+            .map(|result| result.map_err(|e| io::Error::other(format!("Failed to close connection: {}", e))))
     }
 }
 
@@ -715,7 +706,7 @@ mod tests {
                     Ok(0) => break,
                     Ok(n) => {
                         // Echo back the data
-                        if let Err(_) = server.write_all(&buf[..n]).await {
+                        if server.write_all(&buf[..n]).await.is_err() {
                             break;
                         }
                     }
@@ -852,24 +843,24 @@ mod tests {
         client_conn1
             .write_all(msg1)
             .await
-            .map_err(|e| MuxError::Write(e))?;
+            .map_err(MuxError::Write)?;
         client_conn2
             .write_all(msg2)
             .await
-            .map_err(|e| MuxError::Write(e))?;
+            .map_err(MuxError::Write)?;
 
         // Verify data was received
         let mut buf = [0u8; 1024];
         let n = server_conn1
             .read(&mut buf)
             .await
-            .map_err(|e| MuxError::Read(e))?;
+            .map_err(MuxError::Read)?;
         assert_eq!(&buf[..n], msg1);
 
         let n = server_conn2
             .read(&mut buf)
             .await
-            .map_err(|e| MuxError::Read(e))?;
+            .map_err(MuxError::Read)?;
         assert_eq!(&buf[..n], msg2);
 
         // Close one connection
@@ -884,12 +875,12 @@ mod tests {
         client_conn2
             .write_all(msg3)
             .await
-            .map_err(|e| MuxError::Write(e))?;
+            .map_err(MuxError::Write)?;
 
         let n = server_conn2
             .read(&mut buf)
             .await
-            .map_err(|e| MuxError::Read(e))?;
+            .map_err(MuxError::Read)?;
         assert_eq!(&buf[..n], msg3);
 
         // Verify connection was removed from map
@@ -925,7 +916,7 @@ mod tests {
         client_conn
             .write_all(&message)
             .await
-            .map_err(|e| MuxError::Write(e))?;
+            .map_err(MuxError::Write)?;
 
         // Read with small buffer (1KB)
         let mut received = Vec::new();
@@ -935,7 +926,7 @@ mod tests {
             let n = server_conn
                 .read(&mut buf)
                 .await
-                .map_err(|e| MuxError::Read(e))?;
+                .map_err(MuxError::Read)?;
             if n == 0 {
                 break;
             }
@@ -953,7 +944,7 @@ mod tests {
         client_conn
             .write_all(&message)
             .await
-            .map_err(|e| MuxError::Write(e))?;
+            .map_err(MuxError::Write)?;
 
         // Read with small buffer
         received.clear();
@@ -961,7 +952,7 @@ mod tests {
             let n = server_conn
                 .read(&mut buf)
                 .await
-                .map_err(|e| MuxError::Read(e))?;
+                .map_err(MuxError::Read)?;
             if n == 0 {
                 break;
             }
@@ -1019,14 +1010,14 @@ mod tests {
                 client_conn
                     .write_all(msg.as_bytes())
                     .await
-                    .map_err(|e| MuxError::Write(e))?;
+                    .map_err(MuxError::Write)?;
 
                 // Read response
                 let mut buf = [0u8; 1024];
                 let n = client_conn
                     .read(&mut buf)
                     .await
-                    .map_err(|e| MuxError::Read(e))?;
+                    .map_err(MuxError::Read)?;
                 let response = String::from_utf8_lossy(&buf[..n]);
 
                 assert_eq!(response, format!("response from server {}", i));
@@ -1047,7 +1038,7 @@ mod tests {
                 let n = server_conn
                     .read(&mut buf)
                     .await
-                    .map_err(|e| MuxError::Read(e))?;
+                    .map_err(MuxError::Read)?;
                 let msg = String::from_utf8_lossy(&buf[..n]);
 
                 assert_eq!(msg, format!("message from client {}", i));
@@ -1057,7 +1048,7 @@ mod tests {
                 server_conn
                     .write_all(response.as_bytes())
                     .await
-                    .map_err(|e| MuxError::Write(e))?;
+                    .map_err(MuxError::Write)?;
 
                 Ok::<_, MuxError>(())
             });
@@ -1117,14 +1108,14 @@ mod tests {
             client_conn
                 .write_all(msg.as_bytes())
                 .await
-                .map_err(|e| MuxError::Write(e))?;
+                .map_err(MuxError::Write)?;
 
             // Read the message
             let mut buf = [0u8; 1024];
             let n = server_conn
                 .read(&mut buf)
                 .await
-                .map_err(|e| MuxError::Read(e))?;
+                .map_err(MuxError::Read)?;
             let received = String::from_utf8_lossy(&buf[..n]);
 
             // Verify the message
