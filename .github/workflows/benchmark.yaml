@@ -32,7 +32,7 @@ on:
         required: false
         default: 'ghcr.io/unvariance/collector/collector'
         type: string
-  pull_request_target:
+  pull_request:
     paths:
       - deploy/opentelemetry-demo/values.yaml
       - .github/workflows/benchmark.yaml
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
         
       - name: Calculate timeout
         id: calculate-timeout
@@ -108,7 +108,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: (k8s) Setup k3s cluster
         uses: ./.github/actions/setup-k3s
@@ -161,35 +161,19 @@ jobs:
           helm install $RELEASE_NAME opentelemetry-helm-charts/charts/opentelemetry-demo -f deploy/opentelemetry-demo/values.yaml
 
       #### Install dependencies
-
-      - name: (install) Disable IPv6
+      - name: (install) Compute kernel package names
+        id: kernel
         run: |
-          # Disable IPv6 via sysctl
-          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=1
-
-          # Force apt to use IPv4
-          echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
-
-      - name: (install) Configure apt to use HTTPS
-        run: |
-          # Update all archive URLs to use HTTPS
-          sudo sed -i 's/http:/https:/g' /etc/apt/sources.list
-
-          # Install apt-transport-https (might fail initially, hence the || true)
-          sudo apt-get update || true
-          sudo apt-get install -y apt-transport-https ca-certificates
-
-          # Update again with HTTPS now configure
-          sudo apt-get update
+          echo "tools=linux-tools-$(uname -r)" >> $GITHUB_OUTPUT
 
       - name: (install) Install dependencies using apt
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: sysstat linux-tools-common linux-tools-generic bzip2 podman ${{ steps.kernel.outputs.tools }}
+          version: 1.0
+
+      - name: (install) Verify perf and podman
         run: |
-          sudo apt-get update
-          sudo apt-get install -y sysstat linux-tools-common linux-tools-generic linux-tools-`uname -r` bzip2 podman
-          
-          # Verify installations
           perf_version=$(perf --version 2>&1)
           echo "Installed perf: $perf_version"
           podman_version=$(podman --version 2>&1)
@@ -660,13 +644,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: (install) Install build tools
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: build-essential
+          version: 1.0
 
       - name: (install) Install Rust and addr2line
         run: |
-          # Install C compiler and build tools first
-          sudo apt-get install -y build-essential
-
           # Install Rust
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source "$HOME/.cargo/env"
@@ -745,7 +732,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install R Dependencies
         run: |
@@ -1003,7 +990,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install R Dependencies
         run: |
@@ -1055,7 +1042,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
         
       - name: Stop AWS Runner
         uses: ./.github/actions/aws-runner/cleanup
