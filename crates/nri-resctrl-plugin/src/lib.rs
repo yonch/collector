@@ -132,7 +132,6 @@ impl ResctrlPlugin<RealFs> {
     pub fn new(cfg: ResctrlPluginConfig, tx: mpsc::Sender<PodResctrlEvent>) -> Self {
         let rc_cfg = ResctrlConfig {
             group_prefix: cfg.group_prefix.clone(),
-            auto_mount: cfg.auto_mount,
             ..Default::default()
         };
         Self {
@@ -563,6 +562,31 @@ impl<P: FsProvider + Send + Sync + 'static> Plugin for ResctrlPlugin<P> {
         _ctx: &TtrpcContext,
         req: SynchronizeRequest,
     ) -> ttrpc::Result<SynchronizeResponse> {
+        // Ensure resctrl is mounted according to config on every startup synchronize.
+        // If mounting fails, log and continue; subsequent operations may be no-ops.
+        let mounted_ok = match self.resctrl.ensure_mounted(self.cfg.auto_mount) {
+            Ok(()) => true,
+            Err(e) => {
+                warn!("resctrl-plugin: ensure_mounted failed: {}", e);
+                false
+            }
+        };
+
+        // Startup cleanup: if enabled and mounted, remove stale groups.
+        if self.cfg.cleanup_on_start && mounted_ok {
+            match self.resctrl.cleanup_all() {
+                Ok(rep) => {
+                    info!(
+                        "resctrl-plugin: startup cleanup report: removed={}, failures={}, race={}, non_prefix={}",
+                        rep.removed, rep.removal_failures, rep.removal_race, rep.non_prefix_groups
+                    );
+                }
+                Err(e) => {
+                    // Log and continue; do not emit events for cleanup-only actions
+                    warn!("resctrl-plugin: cleanup_all failed: {}", e);
+                }
+            }
+        }
         info!(
             "Synchronizing resctrl plugin with {} pods and {} containers",
             req.pods.len(),
@@ -713,7 +737,7 @@ mod tests {
     use super::*;
     use protobuf::SpecialFields;
 
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestFsState {
         files: std::collections::HashMap<std::path::PathBuf, String>,
         dirs: std::collections::HashSet<std::path::PathBuf>,
@@ -723,9 +747,36 @@ mod tests {
         missing_pids: std::collections::HashSet<i32>,
     }
 
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestFs {
         state: std::sync::Arc<std::sync::Mutex<TestFsState>>,
+    }
+
+    impl Default for TestFsState {
+        fn default() -> Self {
+            let mut s = TestFsState {
+                files: Default::default(),
+                dirs: Default::default(),
+                no_perm_files: Default::default(),
+                nospace_dirs: Default::default(),
+                mkdir_calls: Default::default(),
+                missing_pids: Default::default(),
+            };
+            // Provide a default /proc/mounts that indicates resctrl is mounted
+            s.files.insert(
+                std::path::PathBuf::from("/proc/mounts"),
+                "resctrl /sys/fs/resctrl resctrl rw 0 0\n".to_string(),
+            );
+            s
+        }
+    }
+
+    impl Default for TestFs {
+        fn default() -> Self {
+            TestFs {
+                state: std::sync::Arc::new(std::sync::Mutex::new(TestFsState::default())),
+            }
+        }
     }
 
     impl TestFs {
@@ -829,9 +880,71 @@ mod tests {
                 Err(std::io::Error::from_raw_os_error(libc::ENOENT))
             }
         }
+        fn read_child_dirs(&self, p: &std::path::Path) -> std::io::Result<Vec<String>> {
+            let st = self.state.lock().unwrap();
+            if !st.dirs.contains(p) {
+                return Err(std::io::Error::from_raw_os_error(libc::ENOENT));
+            }
+            let mut out = Vec::new();
+            for d in st.dirs.iter() {
+                if d.parent() == Some(p) {
+                    if let Some(name) = d.file_name() {
+                        out.push(name.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            Ok(out)
+        }
         fn mount_resctrl(&self, _target: &std::path::Path) -> std::io::Result<()> {
             Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
         }
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_on_start_removes_only_prefix() {
+        let fs = TestFs::default();
+        // Ensure resctrl directories exist and contain entries
+        let root = std::path::PathBuf::from("/sys/fs/resctrl");
+        fs.add_dir(std::path::Path::new("/sys"));
+        fs.add_dir(std::path::Path::new("/sys/fs"));
+        fs.add_dir(&root);
+        fs.add_dir(&root.join("mon_groups"));
+        // Add some groups
+        fs.add_dir(&root.join("pod_x1"));
+        fs.add_dir(&root.join("other"));
+        fs.add_dir(&root.join("mon_groups").join("pod_mx"));
+        fs.add_dir(&root.join("mon_groups").join("foo"));
+
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
+        let (tx, mut rx) = mpsc::channel::<PodResctrlEvent>(8);
+        let plugin = ResctrlPlugin::with_resctrl(ResctrlPluginConfig::default(), rc, tx);
+
+        let ctx = TtrpcContext {
+            mh: ttrpc::MessageHeader::default(),
+            metadata: std::collections::HashMap::new(),
+            timeout_nano: 5_000,
+        };
+        let _ = plugin
+            .synchronize(
+                &ctx,
+                SynchronizeRequest {
+                    pods: vec![],
+                    containers: vec![],
+                    more: false,
+                    special_fields: protobuf::SpecialFields::default(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // No events emitted for cleanup-only
+        assert!(rx.try_recv().is_err());
+
+        // Prefix dirs removed, others remain
+        assert!(!fs.exists(&root.join("pod_x1")));
+        assert!(fs.exists(&root.join("other")));
+        assert!(!fs.exists(&root.join("mon_groups").join("pod_mx")));
+        assert!(fs.exists(&root.join("mon_groups").join("foo")));
     }
 
     #[test]
@@ -889,13 +1002,7 @@ mod tests {
         fs.add_dir(&cg);
         fs.add_file(&cg.join("cgroup.procs"), "1\n2\n");
 
-        let rc = Resctrl::with_provider(
-            fs.clone(),
-            resctrl::Config {
-                auto_mount: false,
-                ..Default::default()
-            },
-        );
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
 
         // Use mock PID source from the module
         use crate::pid_source::test_support::MockCgroupPidSource;
@@ -1003,13 +1110,7 @@ mod tests {
         fs.add_dir(std::path::Path::new("/sys/fs"));
         fs.add_dir(std::path::Path::new("/sys/fs/resctrl"));
 
-        let rc = Resctrl::with_provider(
-            fs.clone(),
-            resctrl::Config {
-                auto_mount: false,
-                ..Default::default()
-            },
-        );
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
 
         use crate::pid_source::test_support::MockCgroupPidSource;
         let mock_pid_src = MockCgroupPidSource::new();
@@ -1101,13 +1202,7 @@ mod tests {
         fs.add_dir(std::path::Path::new("/sys/fs"));
         fs.add_dir(std::path::Path::new("/sys/fs/resctrl"));
 
-        let rc = Resctrl::with_provider(
-            fs.clone(),
-            resctrl::Config {
-                auto_mount: false,
-                ..Default::default()
-            },
-        );
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
 
         let mock_pid_src = Arc::new(MockCgroupPidSource::new());
         let (tx, mut rx) = mpsc::channel::<PodResctrlEvent>(16);
@@ -1237,13 +1332,7 @@ mod tests {
         fs.add_dir(std::path::Path::new("/sys/fs"));
         fs.add_dir(std::path::Path::new("/sys/fs/resctrl"));
 
-        let rc = Resctrl::with_provider(
-            fs.clone(),
-            resctrl::Config {
-                auto_mount: false,
-                ..Default::default()
-            },
-        );
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
 
         let gp = std::path::PathBuf::from("/sys/fs/resctrl/pod_u1");
         fs.add_dir(&gp);
@@ -1366,13 +1455,7 @@ mod tests {
         fs.add_dir(std::path::Path::new("/sys"));
         fs.add_dir(std::path::Path::new("/sys/fs"));
         fs.add_dir(std::path::Path::new("/sys/fs/resctrl"));
-        let rc = Resctrl::with_provider(
-            fs.clone(),
-            resctrl::Config {
-                auto_mount: false,
-                ..Default::default()
-            },
-        );
+        let rc = Resctrl::with_provider(fs.clone(), resctrl::Config::default());
         let (tx, mut rx) = mpsc::channel::<PodResctrlEvent>(32);
         let pod_a = nri::api::PodSandbox {
             id: "sbA".into(),

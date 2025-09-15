@@ -49,22 +49,28 @@ jobs:
           rustc -V
           cargo -V
 
-      - name: Run unit tests (no hardware)
+      - name: Run unit tests (resctrl)
         run: |
           source $HOME/.cargo/env
           # RESCTRL_E2E not set, so smoke test is skipped
-          cargo test -p resctrl --release -- --nocapture
+          RUST_TEST_THREADS=1 cargo test -p resctrl --release -- --nocapture --test-threads=1
 
       - name: Run unit tests (nri-resctrl-plugin)
         run: |
           source $HOME/.cargo/env
-          cargo test -p nri-resctrl-plugin -- --nocapture
+          RUST_TEST_THREADS=1 cargo test -p nri-resctrl-plugin --release -- --nocapture --test-threads=1
 
       - name: Build test binaries (no-run)
         run: |
           source $HOME/.cargo/env
           # Build only the hardware smoke integration test binary
           cargo test -p resctrl --test smoke_test --release --no-run
+
+      - name: Build nri-resctrl-plugin integration tests (no-run)
+        run: |
+          source $HOME/.cargo/env
+          # Build all integration tests for nri-resctrl-plugin without running them
+          cargo test -p nri-resctrl-plugin --tests --release --no-run
 
 
       - name: Collect smoke test binary
@@ -86,6 +92,28 @@ jobs:
         with:
           name: resctrl-smoke-bin
           path: resctrl-smoke
+          if-no-files-found: error
+
+      - name: Collect nri-resctrl-plugin e2e binary
+        id: collect-plugin-bin
+        run: |
+          set -euxo pipefail
+          P_BIN=$(find target/release/deps -maxdepth 1 -type f -executable -name 'integration_test-*' | head -n 1)
+          if [ -z "$P_BIN" ]; then
+            echo "nri-resctrl-plugin integration test binary not found" >&2
+            find target/release -maxdepth 2 -type f -name '*integration_test*' || true
+            exit 1
+          fi
+          file "$P_BIN" || true
+          ldd "$P_BIN" || true
+          cp "$P_BIN" nri-resctrl-plugin-e2e
+          chmod +x nri-resctrl-plugin-e2e
+
+      - name: Upload nri-resctrl-plugin e2e binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nri-resctrl-plugin-e2e
+          path: nri-resctrl-plugin-e2e
           if-no-files-found: error
 
   nri-resctrl-plugin-registration:
@@ -170,9 +198,10 @@ jobs:
       - name: Run plugin integration test (register + shutdown)
         env:
           NRI_SOCKET_PATH: /tmp/nri/nri.sock
+          RUST_LOG: info
         run: |
           echo "Using test binary: $TEST_BINARY_PATH"
-          sudo -E "$TEST_BINARY_PATH" --ignored --nocapture
+          sudo -E "$TEST_BINARY_PATH" --ignored --nocapture --test-threads=1
 
       - name: Cleanup KIND
         if: always()
@@ -202,7 +231,7 @@ jobs:
           image-type: ${{ inputs.image-type || 'ubuntu-24.04' }}
           market-type: 'spot'
 
-  resctrl-e2e:
+  resctrl-e2e-smoke:
     name: Run resctrl smoke test
     needs: [build-and-unit-test, setup-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
@@ -213,16 +242,11 @@ jobs:
       - name: Prepare HOME
         run: mkdir -p "$HOME"
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Download smoke binary
         uses: actions/download-artifact@v4
         with:
           name: resctrl-smoke-bin
           path: ./
-
-      # All detection and ensure_mounted checks are now part of the smoke test itself
 
       - name: Run resctrl smoke test (hardware)
         shell: bash
@@ -231,11 +255,41 @@ jobs:
           BIN=./resctrl-smoke
           chmod +x "$BIN" || true
           echo "Executing $BIN"
-          RESCTRL_E2E=1 "$BIN" --nocapture
+          RESCTRL_E2E=1 "$BIN" --nocapture --test-threads=1
+
+  nri-resctrl-plugin-e2e:
+    name: Run nri-resctrl-plugin E2E
+    needs: [build-and-unit-test, setup-runner]
+    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
+    timeout-minutes: 20
+    env:
+      HOME: /root
+    steps:
+      - name: Prepare HOME
+        run: mkdir -p "$HOME"
+
+      - name: Download nri-resctrl-plugin e2e binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nri-resctrl-plugin-e2e
+          path: ./
+
+      - name: Run nri-resctrl-plugin E2E (hardware resctrl)
+        shell: bash
+        env:
+          NRI_SOCKET_PATH: /var/run/nri/nri.sock
+          RUST_TEST_THREADS: 1
+          RUST_LOG: info
+        run: |
+          set -euxo pipefail
+          P_BIN=./nri-resctrl-plugin-e2e
+          chmod +x "$P_BIN" || true
+          echo "Executing $P_BIN"
+          RESCTRL_E2E=1 "$P_BIN" --nocapture --test-threads=1
 
   stop-runner:
     name: Stop EC2 runner
-    needs: [setup-runner, resctrl-e2e]
+    needs: [setup-runner, resctrl-e2e-smoke, nri-resctrl-plugin-e2e]
     runs-on: ubuntu-latest
     if: always()
     steps:

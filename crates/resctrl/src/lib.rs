@@ -31,7 +31,6 @@ impl AssignmentResult {
 pub struct Config {
     pub root: PathBuf,
     pub group_prefix: String,
-    pub auto_mount: bool,
 }
 
 impl Default for Config {
@@ -39,7 +38,6 @@ impl Default for Config {
         Self {
             root: PathBuf::from(DEFAULT_ROOT),
             group_prefix: DEFAULT_PREFIX.to_string(),
-            auto_mount: false,
         }
     }
 }
@@ -120,17 +118,17 @@ impl<P: FsProvider> Resctrl<P> {
         })
     }
 
-    /// Ensure resctrl is mounted according to configuration.
+    /// Ensure resctrl is mounted according to the given flag.
     /// - If already mounted, returns Ok(())
-    /// - If not mounted and auto_mount is false, returns Error::NotMounted
-    /// - If not mounted and auto_mount is true, attempts to mount and returns
+    /// - If not mounted and `auto_mount` is false, returns Error::NotMounted
+    /// - If not mounted and `auto_mount` is true, attempts to mount and returns
     ///   NoPermission/Unsupported/Io on failure.
-    pub fn ensure_mounted(&self) -> Result<()> {
+    pub fn ensure_mounted(&self, auto_mount: bool) -> Result<()> {
         let info = self.detect_support()?;
         if info.mounted {
             return Ok(());
         }
-        if !self.cfg.auto_mount {
+        if !auto_mount {
             return Err(Error::NotMounted {
                 root: self.cfg.root.clone(),
             });
@@ -346,6 +344,81 @@ impl<P: FsProvider> Resctrl<P> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CleanupReport {
+    pub removed: usize,
+    pub removal_failures: usize,
+    pub removal_race: usize,
+    pub non_prefix_groups: usize,
+}
+
+impl<P: FsProvider> Resctrl<P> {
+    /// Remove stale resctrl groups created by this component at startup.
+    ///
+    /// Best-effort removal of immediate child directories under the resctrl root
+    /// and under the root-level `mon_groups` directory that start with the
+    /// configured group prefix. Only directories are removed; files are ignored.
+    ///
+    /// Assumes resctrl is mounted. Does not call `ensure_mounted()`.
+    /// Fails if listing the root or `mon_groups` directory fails. Per-entry
+    /// deletion errors are counted in the returned report and the sweep continues.
+    pub fn cleanup_all(&self) -> Result<CleanupReport> {
+        let root = &self.cfg.root;
+        let mon_groups_dir = root.join("mon_groups");
+
+        let mut report = CleanupReport::default();
+
+        // Sweep root-level groups, excluding known non-group directories.
+        let root_children_all = self
+            .fs
+            .read_child_dirs(root)
+            .map_err(|e| map_basic_fs_error(root, &e))?;
+        let root_children: Vec<String> = root_children_all
+            .into_iter()
+            .filter(|n| n != "info" && n != "mon_data" && n != "mon_groups")
+            .collect();
+        report = self.cleanup_in_dir(root, &root_children, report)?;
+
+        // Sweep root-level mon_groups
+        let mon_groups_dir_children = self
+            .fs
+            .read_child_dirs(&mon_groups_dir)
+            .map_err(|e| map_basic_fs_error(&mon_groups_dir, &e))?;
+        report = self.cleanup_in_dir(&mon_groups_dir, &mon_groups_dir_children, report)?;
+
+        Ok(report)
+    }
+
+    fn cleanup_in_dir(
+        &self,
+        parent: &Path,
+        child_dirs: &[String],
+        mut report: CleanupReport,
+    ) -> Result<CleanupReport> {
+        for name in child_dirs {
+            if name.starts_with(&self.cfg.group_prefix) {
+                let p = parent.join(name);
+                match self.fs.remove_dir(&p) {
+                    Ok(()) => report.removed += 1,
+                    Err(e) => {
+                        if let Some(code) = e.raw_os_error() {
+                            if code == libc::ENOENT {
+                                report.removal_race += 1;
+                                continue;
+                            }
+                        }
+                        // Other errors counted as failures
+                        report.removal_failures += 1;
+                    }
+                }
+            } else {
+                report.non_prefix_groups += 1;
+            }
+        }
+        Ok(report)
+    }
+}
+
 fn sanitize_uid(uid: &str) -> String {
     let filtered: String = uid
         .chars()
@@ -499,10 +572,9 @@ mod tests {
             Config {
                 root: PathBuf::from("/sys/fs/resctrl"),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
-        let err = rc.ensure_mounted().unwrap_err();
+        let err = rc.ensure_mounted(false).unwrap_err();
         match err {
             Error::NotMounted { .. } => {}
             other => panic!("unexpected: {other:?}"),
@@ -521,10 +593,9 @@ mod tests {
             Config {
                 root: PathBuf::from("/sys/fs/resctrl"),
                 group_prefix: "pod_".into(),
-                auto_mount: true,
             },
         );
-        rc.ensure_mounted().expect("mounted");
+        rc.ensure_mounted(true).expect("mounted");
         // After mount, detect reports mounted
         let info = rc.detect_support().expect("detect ok");
         assert!(info.mounted);
@@ -545,10 +616,9 @@ mod tests {
             Config {
                 root: PathBuf::from("/sys/fs/resctrl"),
                 group_prefix: "pod_".into(),
-                auto_mount: true,
             },
         );
-        let err = rc.ensure_mounted().unwrap_err();
+        let err = rc.ensure_mounted(true).unwrap_err();
         match err {
             Error::NoPermission { .. } => {}
             other => panic!("unexpected: {other:?}"),
@@ -566,10 +636,9 @@ mod tests {
             Config {
                 root: PathBuf::from("/sys/fs/resctrl"),
                 group_prefix: "pod_".into(),
-                auto_mount: true,
             },
         );
-        let err = rc.ensure_mounted().unwrap_err();
+        let err = rc.ensure_mounted(true).unwrap_err();
         match err {
             Error::Unsupported { .. } => {}
             other => panic!("unexpected: {other:?}"),
@@ -584,7 +653,6 @@ mod tests {
         let cfg = Config {
             root: root.clone(),
             group_prefix: "pod_".into(),
-            auto_mount: false,
         };
         let rc = Resctrl::with_provider(fs.clone(), cfg);
         let group = rc.create_group("my-pod:UID").expect("create ok");
@@ -613,7 +681,6 @@ mod tests {
         let cfg = Config {
             root: root.clone(),
             group_prefix: "pod_".into(),
-            auto_mount: false,
         };
         let group_path = root.join("pod_abc");
         fs.set_nospace_dir(&group_path);
@@ -636,7 +703,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         rc.delete_group(group_path.to_str().unwrap())
@@ -661,7 +727,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let res = rc
@@ -687,7 +752,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let err = rc
@@ -712,7 +776,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let err = rc
@@ -742,7 +805,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let pids = rc
@@ -766,7 +828,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let err = rc
@@ -797,7 +858,6 @@ mod tests {
             Config {
                 root,
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
         let err = rc
@@ -838,7 +898,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -898,7 +957,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -939,7 +997,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -981,7 +1038,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -1030,7 +1086,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -1089,7 +1144,6 @@ mod tests {
             Config {
                 root: root.clone(),
                 group_prefix: "pod_".into(),
-                auto_mount: false,
             },
         );
 
@@ -1129,5 +1183,160 @@ mod tests {
         assert!(listed.contains(&100));
         // At least the first dynamic PID should be present
         assert!(listed.iter().any(|p| *p >= 201));
+    }
+
+    #[test]
+    fn test_cleanup_all_counts_and_removes() {
+        let fs = MockFs::default();
+        // Simulate mounted
+        fs.add_file(
+            Path::new("/proc/mounts"),
+            "resctrl /sys/fs/resctrl resctrl rw 0 0\n",
+        );
+
+        let root = PathBuf::from("/sys/fs/resctrl");
+        fs.add_dir(Path::new("/sys"));
+        fs.add_dir(Path::new("/sys/fs"));
+        fs.add_dir(&root);
+        // root children
+        fs.add_dir(&root.join("pod_u1"));
+        fs.add_dir(&root.join("pod_u2"));
+        fs.add_dir(&root.join("info"));
+        // include a non-prefix custom directory under root
+        fs.add_dir(&root.join("custom_root"));
+        fs.add_dir(&root.join("mon_groups"));
+        // mon_groups children
+        fs.add_dir(&root.join("mon_groups").join("pod_u1"));
+        fs.add_dir(&root.join("mon_groups").join("pod_u3"));
+        fs.add_dir(&root.join("mon_groups").join("custom"));
+
+        let rc = Resctrl::with_provider(
+            fs.clone(),
+            Config {
+                root: root.clone(),
+                group_prefix: "pod_".into(),
+            },
+        );
+
+        let rep = rc.cleanup_all().expect("cleanup ok");
+        assert_eq!(rep.removed, 4);
+        assert_eq!(rep.removal_failures, 0);
+        assert_eq!(rep.removal_race, 0);
+        // non-prefix: custom_root under root, and custom under mon_groups
+        assert_eq!(rep.non_prefix_groups, 2);
+
+        // Verify removals on fs
+        assert!(!fs.dir_exists(&root.join("pod_u1")));
+        assert!(!fs.dir_exists(&root.join("pod_u2")));
+        assert!(!fs.dir_exists(&root.join("mon_groups").join("pod_u1")));
+        assert!(!fs.dir_exists(&root.join("mon_groups").join("pod_u3")));
+
+        // Non-prefix remain
+        assert!(fs.dir_exists(&root.join("info")));
+        assert!(fs.dir_exists(&root.join("mon_groups")));
+        assert!(fs.dir_exists(&root.join("mon_groups").join("custom")));
+        assert!(fs.dir_exists(&root.join("custom_root")));
+    }
+
+    #[test]
+    fn test_cleanup_all_failures_and_race() {
+        let fs = MockFs::default();
+        // Simulate mounted
+        fs.add_file(
+            Path::new("/proc/mounts"),
+            "resctrl /sys/fs/resctrl resctrl rw 0 0\n",
+        );
+
+        let root = PathBuf::from("/sys/fs/resctrl");
+        fs.add_dir(Path::new("/sys"));
+        fs.add_dir(Path::new("/sys/fs"));
+        fs.add_dir(&root);
+        fs.add_dir(&root.join("mon_groups"));
+
+        // We'll simulate listing that includes one existing, one missing (race),
+        // and one no-permission path for removal; plus a non-prefix keep entry.
+        fs.add_dir(&root.join("x_keep")); // non-prefix
+        fs.add_dir(&root.join("pod_fail"));
+        fs.set_no_perm_remove_dir(&root.join("pod_fail"));
+        // Also add a root entry that will successfully be removed
+        fs.add_dir(&root.join("pod_r_ok"));
+        // Race: include pod_race in listing override but do not create it
+        fs.set_child_dirs_override(
+            &root,
+            vec![
+                "pod_fail".into(),
+                "pod_race".into(),
+                "x_keep".into(), // non-prefix
+                "pod_r_ok".into(),
+            ],
+        );
+
+        // mon_groups with one removable
+        fs.add_dir(&root.join("mon_groups").join("pod_m1"));
+
+        let rc = Resctrl::with_provider(
+            fs.clone(),
+            Config {
+                root: root.clone(),
+                group_prefix: "pod_".into(),
+            },
+        );
+
+        let rep = rc.cleanup_all().expect("cleanup ok");
+        // Removed: mon_groups/pod_m1 and root/pod_r_ok
+        assert_eq!(rep.removed, 2);
+        // Failures: pod_fail remove permission denied
+        assert_eq!(rep.removal_failures, 1);
+        // Race: pod_race ENOENT
+        assert_eq!(rep.removal_race, 1);
+        // Non-prefix: x_keep (root). Root special dirs filtered; none under mon_groups listing.
+        assert_eq!(rep.non_prefix_groups, 1);
+
+        // Verify removals and non-removals on fs
+        assert!(fs.dir_exists(&root.join("x_keep")), "x_keep should remain");
+        assert!(
+            !fs.dir_exists(&root.join("pod_r_ok")),
+            "pod_r_ok should be removed"
+        );
+        assert!(
+            !fs.dir_exists(&root.join("mon_groups").join("pod_m1")),
+            "pod_m1 should be removed"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_all_list_errors() {
+        let fs = MockFs::default();
+        let root = PathBuf::from("/sys/fs/resctrl");
+        // Root dir missing -> list error
+        let rc = Resctrl::with_provider(
+            fs.clone(),
+            Config {
+                root: root.clone(),
+                group_prefix: "pod_".into(),
+            },
+        );
+        let err = rc.cleanup_all().unwrap_err();
+        match err {
+            Error::Io { path, source } => {
+                assert_eq!(path, root);
+                assert_eq!(source.raw_os_error(), Some(libc::ENOENT));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        // Root exists but mon_groups unreadable
+        fs.add_dir(&root);
+        fs.add_dir(&root.join("mon_groups"));
+        fs.set_no_perm_dir(&root.join("mon_groups"));
+        let err2 = rc.cleanup_all().unwrap_err();
+        match err2 {
+            Error::NoPermission { path, source } => {
+                let ps = path.to_string_lossy();
+                assert!(ps.ends_with("/sys/fs/resctrl/mon_groups"), "path={}", ps);
+                assert_eq!(source.raw_os_error(), Some(libc::EACCES));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }
