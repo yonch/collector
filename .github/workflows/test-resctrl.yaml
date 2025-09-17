@@ -17,6 +17,7 @@ on:
     paths:
       - 'crates/resctrl/**'
       - 'crates/nri-resctrl-plugin/**'
+      - '.github/actions/setup-k3s/**'
       - '.github/workflows/test-resctrl.yaml'
       - 'Cargo.toml'
   push:
@@ -25,6 +26,7 @@ on:
     paths:
       - 'crates/resctrl/**'
       - 'crates/nri-resctrl-plugin/**'
+      - '.github/actions/setup-k3s/**'
       - '.github/workflows/test-resctrl.yaml'
       - 'Cargo.toml'
 
@@ -40,6 +42,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Cache cargo registry and git index
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-resctrl-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-resctrl-cargo-
+
+      - name: Cache cargo build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-resctrl-target-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-resctrl-target-
 
       - name: Install Rust toolchain
         run: |
@@ -116,101 +136,80 @@ jobs:
           path: nri-resctrl-plugin-e2e
           if-no-files-found: error
 
-  nri-resctrl-plugin-registration:
-    name: NRI resctrl plugin registration (KIND)
-    runs-on: ubuntu-latest
+  nri-resctrl-plugin-e2e:
+    name: NRI resctrl plugin full flow (k3s on EC2)
+    needs: [setup-runner, build-and-unit-test]
+    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure Docker is running
-        run: |
-          set -x
-          set +e
-          (sudo systemctl start docker || sudo service docker start || true)
-          docker info
-
-      - name: Install KIND and kubectl
-        run: |
-          # Install KIND
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
-
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client
-
-      - name: Create KIND cluster with NRI support
-        run: |
-          cat > kind-config.yaml << 'EOF'
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          name: nri-resctrl-plugin-test
-          nodes:
-          - role: control-plane
-            extraMounts:
-            - hostPath: /tmp/nri
-              containerPath: /var/run/nri
-            - hostPath: /tmp/nri-conf
-              containerPath: /etc/nri/conf.d
-            - hostPath: /tmp/nri-plugins
-              containerPath: /opt/nri/plugins
-          containerdConfigPatches:
-          - |-
-            [plugins."io.containerd.nri.v1.nri"]
-              disable = false
-              disable_connections = false
-              socket_path = "/var/run/nri/nri.sock"
-              plugin_config_path = "/etc/nri/conf.d"
-              plugin_path = "/opt/nri/plugins"
-          EOF
-
-          sudo mkdir -p /tmp/nri /tmp/nri-conf /tmp/nri-plugins
-          sudo chmod 777 /tmp/nri /tmp/nri-conf /tmp/nri-plugins
-
-          kind create cluster --config kind-config.yaml --wait 300s
-          kubectl cluster-info --context kind-nri-resctrl-plugin-test
+      - name: Setup k3s
+        uses: ./.github/actions/setup-k3s
+        with:
+          kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+          disable_packaged_addons: true
+          preflight_inotify: true
+          wait_kube_system: false
+          timeout_api_server_ready_seconds: 300
+          timeout_node_ready_seconds: 300
 
       - name: Verify NRI socket
         run: |
-          for i in {1..30}; do
-            if sudo test -S "/tmp/nri/nri.sock"; then
-              echo "NRI socket found"; ls -la /tmp/nri/nri.sock; break
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          echo "=== Waiting for NRI socket at /var/run/nri/nri.sock ==="
+          for i in $(seq 1 90); do
+            if sudo test -S /var/run/nri/nri.sock; then
+              echo "✓ NRI socket present"
+              sudo ls -la /var/run/nri/nri.sock
+              break
             fi
-            echo "Waiting for NRI socket ($i/30)"; sleep 2
+            sleep 1
           done
-          sudo test -S "/tmp/nri/nri.sock" || { echo "NRI socket missing"; exit 1; }
+          if ! sudo test -S /var/run/nri/nri.sock; then
+            echo "✗ NRI socket not found after enabling on k3s"
+            sudo journalctl -u k3s --no-pager -n 200 || true
+            exit 1
+          fi
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download nri-resctrl-plugin e2e binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nri-resctrl-plugin-e2e
+          path: ./
 
-      - name: Build plugin integration test
+      - name: Prepare test binary
         run: |
-          cargo test --package nri-resctrl-plugin --test integration_test --no-run --verbose
-          TEST_BIN=$(find target/debug/deps -name 'integration_test-*' -type f -executable | head -1)
-          echo "TEST_BINARY_PATH=$TEST_BIN" >> $GITHUB_ENV
+          chmod +x ./nri-resctrl-plugin-e2e || true
 
-      - name: Run plugin integration test (register + shutdown)
+      - name: Run plugin integration tests (excluding capacity retry)
         env:
-          NRI_SOCKET_PATH: /tmp/nri/nri.sock
+          NRI_SOCKET_PATH: /var/run/nri/nri.sock
           RUST_LOG: info
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
         run: |
-          echo "Using test binary: $TEST_BINARY_PATH"
-          sudo -E "$TEST_BINARY_PATH" --ignored --nocapture --test-threads=1
+          echo "Using prebuilt test binary: ./nri-resctrl-plugin-e2e"
+          NRI_SOCKET_PATH="/var/run/nri/nri.sock" sudo -E ./nri-resctrl-plugin-e2e --include-ignored --nocapture --test-threads=1 --skip test_capacity_retry_e2e
 
-      - name: Cleanup KIND
+      - name: Run plugin integration test (capacity retry)
+        env:
+          NRI_SOCKET_PATH: /var/run/nri/nri.sock
+          RUST_LOG: info
+          KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+        run: |
+          echo "Using prebuilt test binary: ./nri-resctrl-plugin-e2e"
+          NRI_SOCKET_PATH="/var/run/nri/nri.sock" sudo -E ./nri-resctrl-plugin-e2e test_capacity_retry_e2e --include-ignored --nocapture --test-threads=1
+      - name: Cleanup k3s
         if: always()
         run: |
-          kind delete cluster --name nri-resctrl-plugin-test || true
+          sudo /usr/local/bin/k3s-uninstall.sh || true
 
 
   setup-runner:
     name: Start EC2 runner (resctrl-capable)
+    needs: [build-and-unit-test]
     runs-on: ubuntu-latest
     outputs:
       runner-label: ${{ steps.start-runner.outputs.runner-label }}
@@ -256,36 +255,6 @@ jobs:
           chmod +x "$BIN" || true
           echo "Executing $BIN"
           RESCTRL_E2E=1 "$BIN" --nocapture --test-threads=1
-
-  nri-resctrl-plugin-e2e:
-    name: Run nri-resctrl-plugin E2E
-    needs: [build-and-unit-test, setup-runner]
-    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
-    timeout-minutes: 20
-    env:
-      HOME: /root
-    steps:
-      - name: Prepare HOME
-        run: mkdir -p "$HOME"
-
-      - name: Download nri-resctrl-plugin e2e binary
-        uses: actions/download-artifact@v4
-        with:
-          name: nri-resctrl-plugin-e2e
-          path: ./
-
-      - name: Run nri-resctrl-plugin E2E (hardware resctrl)
-        shell: bash
-        env:
-          NRI_SOCKET_PATH: /var/run/nri/nri.sock
-          RUST_TEST_THREADS: 1
-          RUST_LOG: info
-        run: |
-          set -euxo pipefail
-          P_BIN=./nri-resctrl-plugin-e2e
-          chmod +x "$P_BIN" || true
-          echo "Executing $P_BIN"
-          RESCTRL_E2E=1 "$P_BIN" --nocapture --test-threads=1
 
   stop-runner:
     name: Stop EC2 runner

@@ -300,6 +300,9 @@ impl<P: FsProvider> Resctrl<P> {
     /// PIDs returned by `pid_source`, assigning only the missing ones. The loop runs
     /// up to `max_passes` times or until convergence (no missing tasks) is reached.
     ///
+    /// If `pid_source` returns an empty set for any pass, reconciliation fails with
+    /// `Error::EmptyPidSet` and no further passes are attempted.
+    ///
     /// Returns `AssignmentResult { assigned, missing }` where
     /// - `assigned` is the total number of successful task assignments across passes
     /// - `missing` is the number of desired PIDs still not present in the group after
@@ -318,6 +321,9 @@ impl<P: FsProvider> Resctrl<P> {
         for _ in 0..max_passes {
             // Desired tasks for this pass
             let desired_vec = pid_source()?;
+            if desired_vec.is_empty() {
+                return Err(Error::EmptyPidSet);
+            }
             last_desired = desired_vec.into_iter().collect();
 
             // Current tasks in the group
@@ -365,60 +371,75 @@ impl<P: FsProvider> Resctrl<P> {
     /// Fails if listing the root or `mon_groups` directory fails. Per-entry
     /// deletion errors are counted in the returned report and the sweep continues.
     pub fn cleanup_all(&self) -> Result<CleanupReport> {
-        let root = &self.cfg.root;
-        let mon_groups_dir = root.join("mon_groups");
-
-        let mut report = CleanupReport::default();
-
-        // Sweep root-level groups, excluding known non-group directories.
-        let root_children_all = self
-            .fs
-            .read_child_dirs(root)
-            .map_err(|e| map_basic_fs_error(root, &e))?;
-        let root_children: Vec<String> = root_children_all
-            .into_iter()
-            .filter(|n| n != "info" && n != "mon_data" && n != "mon_groups")
-            .collect();
-        report = self.cleanup_in_dir(root, &root_children, report)?;
-
-        // Sweep root-level mon_groups
-        let mon_groups_dir_children = self
-            .fs
-            .read_child_dirs(&mon_groups_dir)
-            .map_err(|e| map_basic_fs_error(&mon_groups_dir, &e))?;
-        report = self.cleanup_in_dir(&mon_groups_dir, &mon_groups_dir_children, report)?;
-
-        Ok(report)
+        cleanup_prefix(&self.fs, &self.cfg.root, &self.cfg.group_prefix)
     }
+}
 
-    fn cleanup_in_dir(
-        &self,
-        parent: &Path,
-        child_dirs: &[String],
-        mut report: CleanupReport,
-    ) -> Result<CleanupReport> {
-        for name in child_dirs {
-            if name.starts_with(&self.cfg.group_prefix) {
-                let p = parent.join(name);
-                match self.fs.remove_dir(&p) {
-                    Ok(()) => report.removed += 1,
-                    Err(e) => {
-                        if let Some(code) = e.raw_os_error() {
-                            if code == libc::ENOENT {
-                                report.removal_race += 1;
-                                continue;
-                            }
+/// Public helper to cleanup resctrl groups by prefix without a Resctrl instance.
+///
+/// Removes immediate child directories under `root` (excluding known metadata
+/// dirs) and under `root/mon_groups` whose names start with `prefix`.
+///
+/// Errors listing the root or mon_groups are returned; per-entry removal errors
+/// are accumulated in the report.
+pub fn cleanup_prefix<P: FsProvider>(fs: &P, root: &Path, prefix: &str) -> Result<CleanupReport> {
+    let mon_groups_dir = root.join("mon_groups");
+
+    let mut report = CleanupReport::default();
+
+    // Sweep root-level groups, excluding known non-group directories.
+    let root_children_all = fs
+        .read_child_dirs(root)
+        .map_err(|e| map_basic_fs_error(root, &e))?;
+    let root_children: Vec<String> = root_children_all
+        .into_iter()
+        .filter(|n| n != "info" && n != "mon_data" && n != "mon_groups")
+        .collect();
+    report = cleanup_in_dir(fs, root, &root_children, prefix, report)?;
+
+    // Sweep root-level mon_groups
+    let mon_groups_dir_children = fs
+        .read_child_dirs(&mon_groups_dir)
+        .map_err(|e| map_basic_fs_error(&mon_groups_dir, &e))?;
+    report = cleanup_in_dir(
+        fs,
+        &mon_groups_dir,
+        &mon_groups_dir_children,
+        prefix,
+        report,
+    )?;
+
+    Ok(report)
+}
+
+fn cleanup_in_dir<P: FsProvider>(
+    fs: &P,
+    parent: &Path,
+    child_dirs: &[String],
+    prefix: &str,
+    mut report: CleanupReport,
+) -> Result<CleanupReport> {
+    for name in child_dirs {
+        if name.starts_with(prefix) {
+            let p = parent.join(name);
+            match fs.remove_dir(&p) {
+                Ok(()) => report.removed += 1,
+                Err(e) => {
+                    if let Some(code) = e.raw_os_error() {
+                        if code == libc::ENOENT {
+                            report.removal_race += 1;
+                            continue;
                         }
-                        // Other errors counted as failures
-                        report.removal_failures += 1;
                     }
+                    // Other errors counted as failures
+                    report.removal_failures += 1;
                 }
-            } else {
-                report.non_prefix_groups += 1;
             }
+        } else {
+            report.non_prefix_groups += 1;
         }
-        Ok(report)
     }
+    Ok(report)
 }
 
 fn sanitize_uid(uid: &str) -> String {
@@ -1060,6 +1081,40 @@ mod tests {
             1,
             "Expected 1 iteration for already-present PIDs"
         );
+    }
+
+    #[test]
+    fn test_reconcile_group_fails_on_empty_pid_source() {
+        let fs = MockFs::default();
+        fs.add_file(
+            Path::new("/proc/mounts"),
+            "resctrl /sys/fs/resctrl resctrl rw 0 0\n",
+        );
+        let root = PathBuf::from("/sys/fs/resctrl");
+        fs.add_dir(&root);
+
+        let group_path = root.join("pod_empty");
+        fs.add_dir(&group_path);
+        let tasks = group_path.join("tasks");
+        fs.add_file(&tasks, "");
+
+        let rc = Resctrl::with_provider(
+            fs,
+            Config {
+                root: root.clone(),
+                group_prefix: "pod_".into(),
+            },
+        );
+
+        // PID source returns an empty set → should be treated as failure
+        let pid_source = || -> Result<Vec<i32>> { Ok(vec![]) };
+        let err = rc
+            .reconcile_group(group_path.to_str().unwrap(), pid_source, 3)
+            .unwrap_err();
+        match err {
+            Error::EmptyPidSet => {}
+            other => panic!("unexpected error: {:?}", other),
+        }
     }
 
     #[test]

@@ -5,6 +5,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'crates/nri/**'
+      - '.github/actions/setup-k3s/**'
       - '.github/workflows/test-nri-integration.yaml'
   push:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'Cargo.toml'
       - 'crates/nri/**'
+      - '.github/actions/setup-k3s/**'
       - '.github/workflows/test-nri-integration.yaml'
 
 permissions:
@@ -28,107 +30,21 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Docker
-        run: |
-          # Ensure Docker is running (should already be on ubuntu-latest)
-          sudo systemctl start docker
-          sudo systemctl enable docker
-          docker --version
-          
-          # Add current user to docker group to avoid sudo
-          sudo usermod -aG docker $USER
-          # Note: In GitHub Actions, this change takes effect in subsequent steps
+      - name: Setup k3s
+        uses: ./.github/actions/setup-k3s
+        with:
+          kubeconfig_path: /etc/rancher/k3s/k3s.yaml
+          disable_packaged_addons: true
+          preflight_inotify: true
+          wait_kube_system: false
+          timeout_api_server_ready_seconds: 300
+          timeout_node_ready_seconds: 300
 
-      - name: Install KIND and kubectl
+      - name: Copy kubeconfig for non-root use
         run: |
-          # Install KIND
-          [ $(uname -m) = x86_64 ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
-          
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client
-
-      - name: Create KIND cluster with NRI support
-        run: |
-          # Create KIND cluster config with NRI support
-          cat > kind-config.yaml << 'EOF'
-          kind: Cluster
-          apiVersion: kind.x-k8s.io/v1alpha4
-          name: nri-test
-          nodes:
-          - role: control-plane
-            extraMounts:
-            - hostPath: /tmp/nri
-              containerPath: /var/run/nri
-            - hostPath: /tmp/nri-conf
-              containerPath: /etc/nri/conf.d
-            - hostPath: /tmp/nri-plugins
-              containerPath: /opt/nri/plugins
-          containerdConfigPatches:
-          - |-
-            [plugins."io.containerd.nri.v1.nri"]
-              disable = false
-              disable_connections = false
-              socket_path = "/var/run/nri/nri.sock"
-              plugin_config_path = "/etc/nri/conf.d"
-              plugin_path = "/opt/nri/plugins"
-          EOF
-          
-          # Create directories for NRI on host that will be mounted
-          sudo mkdir -p /tmp/nri /tmp/nri-conf /tmp/nri-plugins
-          sudo chmod 777 /tmp/nri /tmp/nri-conf /tmp/nri-plugins
-          
-          echo "=== Creating KIND cluster with NRI support ==="
-          kind create cluster --config kind-config.yaml --wait 300s
-          
-          echo "=== Cluster created, checking status ==="
-          kubectl cluster-info --context kind-nri-test
-          kubectl get nodes
-          kubectl get pods -A
-
-      - name: Verify NRI setup
-        run: |
-          echo "=== Verifying NRI socket and configuration ==="
-          
-          # Check if NRI socket exists in the mounted directory
-          for i in {1..30}; do
-            if sudo test -S "/tmp/nri/nri.sock"; then
-              echo "✅ NRI socket found at /tmp/nri/nri.sock"
-              ls -la /tmp/nri/nri.sock
-              break
-            else
-              echo "Waiting for NRI socket... (attempt $i/30)"
-              sleep 2
-            fi
-          done
-          
-          if ! sudo test -S "/tmp/nri/nri.sock"; then
-            echo "❌ NRI socket not found after waiting"
-            echo "Checking KIND container logs..."
-            docker logs nri-test-control-plane 2>&1 | grep -i nri || echo "No NRI logs found"
-            
-            echo "Checking containerd config in KIND container..."
-            docker exec nri-test-control-plane cat /etc/containerd/config.toml
-            
-            echo "Checking if containerd is running with NRI..."
-            docker exec nri-test-control-plane ps aux | grep containerd
-            
-            echo "NRI socket is required for integration tests to work properly"
-            exit 1
-          fi
-          
-          echo "=== Verifying cluster readiness ==="
-          kubectl wait --for=condition=Ready nodes --all --timeout=300s
-          kubectl wait --namespace kube-system --for=condition=Ready pods --all --timeout=300s
-          
-          echo "=== Final cluster status ==="
-          kubectl get nodes -o wide
-          kubectl get pods -A
+          mkdir -p ~/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+          sudo chown $(id -u):$(id -g) ~/.kube/config
 
       - name: Install Rust
         run: |
@@ -139,6 +55,25 @@ jobs:
           echo "=== Rust version info ==="
           rustc --version
           cargo --version
+          
+
+      - name: Capture rustc version
+        id: rustc_version
+        run: |
+          source ~/.cargo/env
+          echo "version=$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo registry, git, and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ steps.rustc_version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ steps.rustc_version.outputs.version }}-
+            ${{ runner.os }}-cargo-
 
       - name: Install build dependencies (APT)
         uses: awalsh128/cache-apt-pkgs-action@v1
@@ -165,66 +100,55 @@ jobs:
           echo "Found test binary at: $TEST_BIN"
           echo "TEST_BINARY_PATH=$TEST_BIN" >> $GITHUB_ENV
 
-      - name: Run NRI Integration Test
+      - name: Verify NRI socket
+        run: |
+          set -euo pipefail
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          echo "=== Waiting for NRI socket at /var/run/nri/nri.sock ==="
+          for i in $(seq 1 90); do
+            if sudo test -S /var/run/nri/nri.sock; then
+              echo "✓ NRI socket present"
+              sudo ls -la /var/run/nri/nri.sock
+              break
+            fi
+            sleep 1
+          done
+          if ! sudo test -S /var/run/nri/nri.sock; then
+            echo "✗ NRI socket not found after enabling on k3s"
+            sudo journalctl -u k3s --no-pager -n 200 || true
+            exit 1
+          fi
+
+      - name: Run NRI Integration Test (host)
         run: |
           source ~/.cargo/env
-          
-          echo "=== Running NRI Integration Test ==="
-          export KUBECONFIG="$(kind get kubeconfig-path --name nri-test)"
-          export NRI_SOCKET_PATH=/tmp/nri/nri.sock
           export RUST_LOG=debug
+          export NRI_SOCKET_PATH=/var/run/nri/nri.sock
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
           
+          echo "=== Running NRI Integration Test on host ==="
           echo "Test binary: $TEST_BINARY_PATH"
+          echo "KUBECONFIG: $KUBECONFIG"
           echo "Socket path: $NRI_SOCKET_PATH"
-          echo "Kubernetes config: $KUBECONFIG"
-          
-          echo "=== Pre-test environment check ==="
-          echo "User: $(whoami)"
           kubectl get nodes
           kubectl get pods -A
-          
           if sudo test -S "$NRI_SOCKET_PATH"; then
-            echo "✅ NRI socket exists - proceeding with NRI integration test"
-            
-            # Check socket permissions
-            echo "NRI socket permissions:"
-            ls -la "$NRI_SOCKET_PATH"
-            
-            # Run the integration test with sudo (NRI requires root permissions)
-            sudo -E $TEST_BINARY_PATH --ignored --nocapture || {
-              echo "=== Test failed, checking logs ==="
-              echo "KIND container logs:"
-              docker logs nri-test-control-plane 2>&1 | tail -100
-              echo "=== End of logs ==="
+            echo "✅ NRI socket exists - running test"
+            sudo -E "$TEST_BINARY_PATH" --ignored --nocapture --test-threads=1 || {
+              echo "=== Test failed; showing k3s logs ==="
+              sudo journalctl -u k3s --no-pager -n 200 || true
               exit 1
             }
           else
-            echo "❌ NRI socket missing - cannot run NRI integration test"
-            echo "This indicates that NRI is not properly configured in KIND"
-            echo "Checking system state:"
-            echo "- KIND container status:"
-            docker ps | grep nri-test
-            echo "- KIND logs:"
-            docker logs nri-test-control-plane 2>&1 | tail -50
-            echo "- NRI directory contents:"
-            ls -la /tmp/nri/ || echo "NRI directory not found"
-            echo "- Containerd config in KIND:"
-            docker exec nri-test-control-plane cat /etc/containerd/config.toml
-            
-            echo "=== Skipping NRI integration test due to missing NRI socket ==="
+            echo "❌ NRI socket missing at $NRI_SOCKET_PATH"
             exit 1
           fi
-          
           echo "=== Verifying test pods cleanup ==="
-          kubectl get pods --all-namespaces | grep -E "(nri-test|nri-pre-existing)" || echo "No test pods found (good - they were cleaned up)"
-          
+          kubectl get pods --all-namespaces | grep -E "(nri-test|nri-pre-existing|nri-cgroup-path-test)" || echo "No leftover test pods"
           echo "=== NRI Integration Test Complete ==="
 
       - name: Cleanup
         if: always()
         run: |
-          echo "=== Cleaning up KIND cluster ==="
-          kind delete cluster --name nri-test || true
-          
-          echo "=== Cleaning up NRI directories ==="
-          sudo rm -rf /tmp/nri /tmp/nri-conf /tmp/nri-plugins || true
+          echo "=== Uninstalling k3s ==="
+          sudo /usr/local/bin/k3s-uninstall.sh || true
