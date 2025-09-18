@@ -2958,6 +2958,7 @@ dependencies = [
  "anyhow",
  "arrow-array",
  "arrow-schema",
+ "humantime",
  "log",
  "nri",
  "nri-resctrl-plugin",

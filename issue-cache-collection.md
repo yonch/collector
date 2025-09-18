@@ -127,7 +127,7 @@ Implementation Plan (high-level)
 - [x] Add periodic plugin `retry_all_once()` and health reporting (failed groups, unreconciled containers).
 - [ ] Basic integration tests behind a feature flag with a mocked `resctrl` trait.
 - Collector integration
-  - [ ] Config surface `resctrl_collector` with defaults; env wiring in Helm chart.
+  - [x] Config surface `resctrl_collector` with defaults; env wiring in Helm chart.
   - [x] Instantiate `resctrl-collector` when enabled and connect it to a new Parquet writer dedicated to occupancy data.
   - [x] Define Parquet schema and ensure partitioning/rotation align with existing conventions.
   - [x] Add HTTP `/ready` and `/live` endpoints in the collector and wire Kubernetes readiness/liveness probes in the Helm chart.
@@ -147,5 +147,4 @@ Definition of Done
 - When enabled, the collector writes Parquet files containing 1 Hz LLC occupancy samples for each active monitor group with pod-level labels and passes basic integration checks on a resctrl-capable node.
 
 Remaining Work
-- Expose `resctrl_collector` configuration (e.g., sampling interval, mountpoint) via flags and wire from Helm values (or consume existing envs), so operators can tune behavior.
 - Basic integration tests for `resctrl-collector` (e.g., behind a feature flag with a mocked resctrl provider).

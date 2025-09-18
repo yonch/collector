@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,8 +17,8 @@ use nri::metadata::{ContainerMetadata, MetadataMessage, MetadataPlugin};
 use nri::NRI;
 use nri_resctrl_plugin::{PodResctrlEvent, ResctrlGroupState, ResctrlPlugin, ResctrlPluginConfig};
 
-/// Default channel capacity for output batches
-const DEFAULT_CHANNEL_CAPACITY: usize = 64;
+/// Default channel capacity for communication with the plugins
+const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 
 /// Create the Arrow schema for resctrl LLC occupancy samples
 pub fn create_schema() -> SchemaRef {
@@ -59,6 +61,8 @@ pub struct ResctrlCollectorConfig {
     pub health_interval: Duration,
     /// Output channel capacity (RecordBatches)
     pub channel_capacity: usize,
+    /// resctrl mountpoint (root path)
+    pub mountpoint: PathBuf,
 }
 
 impl Default for ResctrlCollectorConfig {
@@ -68,7 +72,49 @@ impl Default for ResctrlCollectorConfig {
             retry_interval: Duration::from_secs(10),
             health_interval: Duration::from_secs(60),
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
+            mountpoint: PathBuf::from("/sys/fs/resctrl"),
         }
+    }
+}
+
+impl ResctrlCollectorConfig {
+    /// Create a config from environment variables with sensible defaults.
+    /// Supported variables:
+    /// - `RESCTRL_SAMPLING_INTERVAL` (humantime, e.g., "1s", "500ms")
+    /// - `RESCTRL_RETRY_INTERVAL` (humantime)
+    /// - `RESCTRL_HEALTH_INTERVAL` (humantime)
+    /// - `RESCTRL_CHANNEL_CAPACITY` (usize > 0)
+    /// - `RESCTRL_MOUNT` (path)
+    pub fn from_env() -> Self {
+        let mut cfg = Self::default();
+        if let Ok(s) = env::var("RESCTRL_SAMPLING_INTERVAL") {
+            if let Ok(d) = humantime::parse_duration(&s) {
+                cfg.sample_interval = d;
+            }
+        }
+        if let Ok(s) = env::var("RESCTRL_RETRY_INTERVAL") {
+            if let Ok(d) = humantime::parse_duration(&s) {
+                cfg.retry_interval = d;
+            }
+        }
+        if let Ok(s) = env::var("RESCTRL_HEALTH_INTERVAL") {
+            if let Ok(d) = humantime::parse_duration(&s) {
+                cfg.health_interval = d;
+            }
+        }
+        if let Ok(s) = env::var("RESCTRL_CHANNEL_CAPACITY") {
+            if let Ok(n) = s.parse::<usize>() {
+                if n > 0 {
+                    cfg.channel_capacity = n;
+                }
+            }
+        }
+        if let Ok(m) = env::var("RESCTRL_MOUNT") {
+            if !m.is_empty() {
+                cfg.mountpoint = PathBuf::from(m);
+            }
+        }
+        cfg
     }
 }
 
@@ -89,8 +135,8 @@ pub async fn run(
     cfg: ResctrlCollectorConfig,
 ) -> Result<()> {
     // Outgoing channel is provided by caller; we use try_send and drop on full
-    let (resctrl_tx, mut resctrl_rx) = mpsc::channel::<PodResctrlEvent>(256);
-    let (meta_tx, mut meta_rx) = mpsc::channel::<MetadataMessage>(256);
+    let (resctrl_tx, mut resctrl_rx) = mpsc::channel::<PodResctrlEvent>(cfg.channel_capacity);
+    let (meta_tx, mut meta_rx) = mpsc::channel::<MetadataMessage>(cfg.channel_capacity);
 
     // Create plugins
     let resctrl_plugin = Arc::new(ResctrlPlugin::new(
@@ -137,7 +183,10 @@ pub async fn run(
     let mut pod_labels: HashMap<String, (String, String)> = HashMap::new(); // pod_uid -> (ns, name)
 
     // Resctrl access
-    let rc = resctrl::Resctrl::default();
+    let rc = resctrl::Resctrl::new(resctrl::Config {
+        root: cfg.mountpoint.clone(),
+        ..Default::default()
+    });
 
     // Intervals
     let mut sample_tick = tokio::time::interval(cfg.sample_interval);

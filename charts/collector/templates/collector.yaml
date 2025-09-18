@@ -124,8 +124,6 @@ spec:
               value: "debug"
             {{- end }}
             {{- if .Values.resctrl.enabled }}
-            - name: RESCTRL_COLLECTOR_ENABLED
-              value: "true"
             - name: RESCTRL_SAMPLING_INTERVAL
               value: "{{ .Values.resctrl.samplingInterval }}"
             - name: RESCTRL_MOUNT

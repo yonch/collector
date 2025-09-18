@@ -13,4 +13,4 @@ arrow-schema = { workspace = true }
 nri = { workspace = true }
 nri-resctrl-plugin = { workspace = true }
 resctrl = { workspace = true }
-
+humantime = { workspace = true }
