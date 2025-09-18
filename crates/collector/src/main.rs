@@ -83,6 +83,14 @@ struct Command {
     /// Enable trace mode (outputs individual events instead of aggregated timeslots)
     #[arg(long, default_value = "false")]
     trace: bool,
+
+    /// Enable resctrl LLC occupancy collection (1 Hz)
+    #[arg(long, default_value = "false")]
+    enable_resctrl: bool,
+
+    /// Storage filename prefix for resctrl occupancy parquet files
+    #[arg(long, default_value = "resctrl-occupancy-")]
+    resctrl_prefix: String,
 }
 
 /// Duration timeout handler - exits when duration completes or cancellation token is triggered
@@ -196,7 +204,7 @@ async fn main() -> Result<()> {
     // Determine the number of available CPUs
     let num_cpus = libbpf_rs::num_possible_cpus()?;
 
-    // Compose storage prefix with node identity
+    // Compose storage prefix with node identity for main stream
     let storage_prefix = format!("{}{}", opts.prefix, node_id);
 
     // Create CPU count metadata for parquet files
@@ -212,7 +220,7 @@ async fn main() -> Result<()> {
         file_size_limit: opts.parquet_file_size,
         max_row_group_size: opts.max_row_group_size,
         storage_quota: opts.storage_quota,
-        key_value_metadata: Some(cpu_metadata),
+        key_value_metadata: Some(cpu_metadata.clone()),
     };
 
     // Create channels for the pipeline
@@ -267,7 +275,7 @@ async fn main() -> Result<()> {
         &opts.storage_type,
         &config.storage_prefix
     );
-    let writer = ParquetWriter::new(store, schema, config)?;
+    let writer = ParquetWriter::new(store.clone(), schema, config)?;
 
     // Create ParquetWriterTask with pre-configured channels
     let writer_task = ParquetWriterTask::new(writer, batch_receiver, rotate_receiver);
@@ -280,6 +288,49 @@ async fn main() -> Result<()> {
     ));
 
     debug!("Parquet writer task initialized and ready to receive data");
+
+    // Optionally enable resctrl occupancy collection with a dedicated writer
+    if opts.enable_resctrl {
+        // Schema for occupancy
+        let occ_schema = resctrl_collector::create_schema();
+
+        // Create writer and channels for occupancy
+        let occ_prefix = format!("{}{}{}", opts.prefix, node_id, opts.resctrl_prefix);
+        let occ_config = ParquetWriterConfig {
+            storage_prefix: occ_prefix,
+            buffer_size: opts.parquet_buffer_size,
+            file_size_limit: opts.parquet_file_size,
+            max_row_group_size: opts.max_row_group_size,
+            storage_quota: opts.storage_quota,
+            key_value_metadata: Some(cpu_metadata.clone()),
+        };
+        let (occ_sender, occ_receiver) = mpsc::channel::<RecordBatch>(64);
+        let (occ_rotate_tx, occ_rotate_rx) = mpsc::channel::<()>(1);
+        let mut occ_writer = ParquetWriter::new(store.clone(), occ_schema, occ_config)?;
+        let occ_writer_task = ParquetWriterTask::new(occ_writer, occ_receiver, occ_rotate_rx);
+
+        // Spawn writer task
+        task_tracker.spawn(task_completion_handler(
+            occ_writer_task.run(),
+            shutdown_token.clone(),
+            "ResctrlParquetWriterTask",
+        ));
+
+        // Spawn rotation handler for occupancy writer (separate signal stream)
+        task_tracker.spawn(task_completion_handler(
+            rotation_handler(occ_rotate_tx.clone(), shutdown_token.clone()),
+            shutdown_token.clone(),
+            "ResctrlRotationHandler",
+        ));
+
+        // Spawn the resctrl-collector loop
+        let rcfg = resctrl_collector::ResctrlCollectorConfig::default();
+        task_tracker.spawn(task_completion_handler(
+            resctrl_collector::run(occ_sender, shutdown_token.clone(), rcfg),
+            shutdown_token.clone(),
+            "ResctrlCollector",
+        ));
+    }
 
     // Spawn duration timeout handler only if duration is non-zero
     if opts.duration > 0 {

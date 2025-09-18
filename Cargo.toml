@@ -15,6 +15,7 @@ members = [
     "crates/nri-init",
     "crates/resctrl",
     "crates/nri-resctrl-plugin",
+    "crates/resctrl-collector",
 ]
 
 [workspace.dependencies]
@@ -26,6 +27,7 @@ bpf-sync-timer = { path = "crates/bpf-sync-timer" }
 nri = { path = "crates/nri" }
 resctrl = { path = "crates/resctrl" }
 nri-resctrl-plugin = { path = "crates/nri-resctrl-plugin" }
+resctrl-collector = { path = "crates/resctrl-collector" }
 
 libbpf-rs = "0.24.8"
 plain = "0.2"

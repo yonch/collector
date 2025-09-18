@@ -528,6 +528,7 @@ dependencies = [
  "parquet",
  "perf_events",
  "plain",
+ "resctrl-collector",
  "testing_logger",
  "time",
  "timeslot",
@@ -2948,6 +2949,21 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "resctrl-collector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrow-array",
+ "arrow-schema",
+ "log",
+ "nri",
+ "nri-resctrl-plugin",
+ "resctrl",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
