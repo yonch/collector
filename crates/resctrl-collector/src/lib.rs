@@ -72,7 +72,10 @@ pub async fn run(
     let (meta_tx, mut meta_rx) = mpsc::channel::<MetadataMessage>(256);
 
     // Create plugins
-    let resctrl_plugin = Arc::new(ResctrlPlugin::new(ResctrlPluginConfig::default(), resctrl_tx));
+    let resctrl_plugin = Arc::new(ResctrlPlugin::new(
+        ResctrlPluginConfig::default(),
+        resctrl_tx,
+    ));
     let meta_plugin = Arc::new(MetadataPlugin::new(meta_tx));
 
     // Helper to connect a plugin to NRI (best-effort)
@@ -95,7 +98,10 @@ pub async fn run(
                 }
             }
             Err(e) => {
-                warn!("NRI socket unavailable for {} ({}): {}", name, socket_path, e);
+                warn!(
+                    "NRI socket unavailable for {} ({}): {}",
+                    name, socket_path, e
+                );
                 Ok(None)
             }
         }
@@ -123,8 +129,12 @@ pub async fn run(
 
     // Lifecycle join handles (detached through completion handler in caller typically)
     let (mut nri_resctrl_handle, mut nri_meta_handle) = (None, None);
-    if let Some((_nri, jh)) = nri_resctrl { nri_resctrl_handle = Some(jh); }
-    if let Some((_nri, jh)) = nri_meta { nri_meta_handle = Some(jh); }
+    if let Some((_nri, jh)) = nri_resctrl {
+        nri_resctrl_handle = Some(jh);
+    }
+    if let Some((_nri, jh)) = nri_meta {
+        nri_meta_handle = Some(jh);
+    }
 
     loop {
         tokio::select! {
@@ -259,7 +269,11 @@ pub async fn run(
     }
 
     // Best-effort: close NRI connections
-    if let Some(jh) = nri_resctrl_handle { let _ = jh.abort(); }
-    if let Some(jh) = nri_meta_handle { let _ = jh.abort(); }
+    if let Some(jh) = nri_resctrl_handle {
+        let _ = jh.abort();
+    }
+    if let Some(jh) = nri_meta_handle {
+        let _ = jh.abort();
+    }
     Ok(())
 }

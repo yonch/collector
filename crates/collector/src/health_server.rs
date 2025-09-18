@@ -78,4 +78,3 @@ pub async fn run(addr: String, ready: Arc<AtomicBool>, shutdown: CancellationTok
     }
     Ok(())
 }
-

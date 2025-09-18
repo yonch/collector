@@ -5,6 +5,7 @@ use bpf_sync_timer::SyncTimer;
 use clap::Parser;
 use log::{debug, error, info};
 use object_store::ObjectStore;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
@@ -12,7 +13,6 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 // Import local modules
 mod bpf_error_handler;
@@ -20,6 +20,7 @@ mod bpf_perf_to_timeslot;
 mod bpf_perf_to_trace;
 mod bpf_task_tracker;
 mod bpf_timeslot_tracker;
+mod health_server;
 mod metrics;
 mod nri_enrich_recordbatch_task;
 mod parquet_writer;
@@ -29,7 +30,6 @@ mod task_completion_handler;
 mod task_metadata;
 mod timeslot_data;
 mod timeslot_to_recordbatch_task;
-mod health_server;
 
 use nri_enrich_recordbatch_task::NRIEnrichRecordBatchTask;
 use parquet_writer::{ParquetWriter, ParquetWriterConfig};
