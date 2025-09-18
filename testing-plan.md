@@ -94,13 +94,98 @@ Deliverables (Hermetic)
 
 L2: Collector Integration (run loop, smoke)
 
-Approach
-- Exercise resctrl_collector::run with a short sampling/health interval and a real mpsc sender.
-- Do not depend on NRI connectivity; the loop runs even when plugins fail to connect.
+Goal
+- Prove the `run()` loop ticks deterministically and shuts down cleanly, and that readiness gating behaves as expected. No kernel or NRI dependencies.
 
-Assertions
-- Start run() with a shutdown token; ensure it starts, ticks at least once (e.g., by observing a harmless sample with no pods), and stops cleanly on cancellation.
-- Ready provider in crates/collector uses ResctrlCollector::ready(); verify default readiness gating behavior remains false until both event types are observed (unit-tested above).
+Setup
+- Use `#[tokio::test(flavor = "current_thread", start_paused = true)]` and `tokio::time::{pause, advance}` to drive timers deterministically.
+- Configure tiny intervals in `ResctrlCollectorConfig` (e.g., 10–20ms) and a non-existent mount (we won’t read resctrl because there are no pods).
+- Create a real `mpsc::Sender<RecordBatch>`; we don’t assert on output here because sampling produces rows only when pods exist (covered by L0b via fakes).
+
+Testability Hook (small addition)
+- Add a test-only variant of the loop to inject plugin receivers, enabling us to feed synthetic events without NRI:
+  #[cfg(test)]
+  pub async fn run_with_injected_receivers(
+      this: Arc<ResctrlCollector>,
+      batch_sender: mpsc::Sender<RecordBatch>,
+      shutdown: CancellationToken,
+      cfg: ResctrlCollectorConfig,
+      mut resctrl_rx: mpsc::Receiver<PodResctrlEvent>,
+      mut meta_rx: mpsc::Receiver<MetadataMessage>,
+  ) -> Result<()> { /* same body as run(), but uses provided receivers and skips plugin creation */ }
+
+Concrete Cases
+1) Ticks and shutdown
+   - Purpose: validate the loop starts, ticks, and exits on cancellation.
+   - Code sketch:
+     #[tokio::test(flavor = "current_thread", start_paused = true)]
+     async fn l2_run_smoke_ticks_and_shutdown() -> anyhow::Result<()> {
+         use tokio::time::{advance, pause, Duration};
+         pause();
+         let this = resctrl_collector::ResctrlCollector::new();
+         let (tx, mut _rx) = tokio::sync::mpsc::channel(4);
+         let shutdown = tokio_util::sync::CancellationToken::new();
+         let cfg = resctrl_collector::ResctrlCollectorConfig {
+             sample_interval: Duration::from_millis(10),
+             retry_interval: Duration::from_millis(10),
+             health_interval: Duration::from_millis(10),
+             channel_capacity: 4,
+             mountpoint: "/does/not/exist".into(),
+         };
+         let jh = tokio::spawn(resctrl_collector::run(this.clone(), tx, shutdown.clone(), cfg));
+         advance(Duration::from_millis(10)).await; // sample
+         advance(Duration::from_millis(10)).await; // health
+         assert!(!this.ready()); // no events yet
+         shutdown.cancel();
+         jh.await??;
+         Ok(())
+     }
+
+2) Readiness gating with injected events
+   - Purpose: prove `ready()` flips only after both resctrl and metadata events are observed.
+   - Requires: the test-only `run_with_injected_receivers` hook above.
+   - Code sketch:
+     #[tokio::test(flavor = "current_thread", start_paused = true)]
+     async fn l2_ready_gating_with_events() -> anyhow::Result<()> {
+         use tokio::time::{advance, pause, Duration};
+         use nri_resctrl_plugin::{PodResctrlAddOrUpdate, PodResctrlEvent, ResctrlGroupState};
+         use nri::metadata::{ContainerMetadata, MetadataMessage};
+         pause();
+         let this = resctrl_collector::ResctrlCollector::new();
+         let (batch_tx, mut _batch_rx) = tokio::sync::mpsc::channel(4);
+         let (resctrl_tx, resctrl_rx) = tokio::sync::mpsc::channel(8);
+         let (meta_tx, meta_rx) = tokio::sync::mpsc::channel(8);
+         let shutdown = tokio_util::sync::CancellationToken::new();
+         let cfg = resctrl_collector::ResctrlCollectorConfig::default();
+         let jh = tokio::spawn(resctrl_collector::run_with_injected_receivers(
+             this.clone(), batch_tx, shutdown.clone(), cfg, resctrl_rx, meta_rx,
+         ));
+         // Initially false
+         assert!(!this.ready());
+         // Send resctrl event only → still false
+         resctrl_tx.send(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+             pod_uid: "u1".into(),
+             group_state: ResctrlGroupState::Exists("g1".into()),
+             total_containers: 1,
+             reconciled_containers: 1,
+         })).await.unwrap();
+         advance(Duration::from_millis(1)).await;
+         assert!(!this.ready());
+         // Send metadata event → now true
+         meta_tx.send(MetadataMessage::Add(
+             "c1".into(),
+             Box::new(ContainerMetadata { pod_uid: "u1".into(), pod_namespace: "ns".into(), pod_name: "p".into(), ..Default::default() })
+         )).await.unwrap();
+         advance(Duration::from_millis(1)).await;
+         assert!(this.ready());
+         shutdown.cancel();
+         jh.await??;
+         Ok(())
+     }
+
+Notes
+- These L2 tests intentionally avoid asserting on produced `RecordBatch` contents; row emission is covered hermetically at L0b using a fake `LlcReader`.
+- If desired, a third L2 test can assert that the loop does not panic when the batch channel is full (configure capacity=1, drive ticks, and verify no crash). Emission itself still requires L0b fakes or a temporary on-disk resctrl layout.
 
 L3: Binary E2E (Cluster or Single-Node)
 
