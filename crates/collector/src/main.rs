@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
         };
         let (occ_sender, occ_receiver) = mpsc::channel::<RecordBatch>(64);
         let (occ_rotate_tx, occ_rotate_rx) = mpsc::channel::<()>(1);
-        let mut occ_writer = ParquetWriter::new(store.clone(), occ_schema, occ_config)?;
+        let occ_writer = ParquetWriter::new(store.clone(), occ_schema, occ_config)?;
         let occ_writer_task = ParquetWriterTask::new(occ_writer, occ_receiver, occ_rotate_rx);
 
         // Spawn writer task

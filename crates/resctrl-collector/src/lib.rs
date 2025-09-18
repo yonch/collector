@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use arrow_array::builder::{Int64Builder, StringBuilder};
 use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
@@ -225,7 +225,8 @@ pub async fn run(
                     .collect();
 
                 let mut rows = 0usize;
-                let mut samples: Vec<(Option<(String, String)>, String, String, i64)> = Vec::new();
+                type SampleRow = (Option<(String, String)>, String, String, i64);
+                let mut samples: Vec<SampleRow> = Vec::new();
                 for (uid, gp) in groups_to_sample {
                     match rc.llc_occupancy_total_bytes(&gp) {
                         Ok(total) => {
@@ -346,10 +347,10 @@ pub async fn run(
 
     // Best-effort: close NRI connections
     if let Some(jh) = nri_resctrl_handle {
-        let _ = jh.abort();
+        jh.abort();
     }
     if let Some(jh) = nri_meta_handle {
-        let _ = jh.abort();
+        jh.abort();
     }
     Ok(())
 }
