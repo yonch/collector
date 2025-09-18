@@ -53,6 +53,14 @@ collector:
   # Maximum total bytes to write to object store (optional)
   storageQuota: null
 
+# Resctrl collector (experimental feature; disabled by default)
+resctrl:
+  enabled: false
+  # Sampling interval for LLC occupancy measurements
+  samplingInterval: "1s"
+  # Path where resctrl is mounted on the host
+  mountpoint: "/sys/fs/resctrl"
+
 # Storage configuration
 storage:
   type: "s3"  # Options: "local", "s3"
