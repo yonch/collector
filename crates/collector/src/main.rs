@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // Import local modules
 mod bpf_error_handler;
@@ -28,6 +29,7 @@ mod task_completion_handler;
 mod task_metadata;
 mod timeslot_data;
 mod timeslot_to_recordbatch_task;
+mod health_server;
 
 use nri_enrich_recordbatch_task::NRIEnrichRecordBatchTask;
 use parquet_writer::{ParquetWriter, ParquetWriterConfig};
@@ -91,6 +93,10 @@ struct Command {
     /// Storage filename prefix for resctrl occupancy parquet files
     #[arg(long, default_value = "resctrl-occupancy-")]
     resctrl_prefix: String,
+
+    /// Address to bind the health HTTP server (for readiness/liveness)
+    #[arg(long, default_value = "0.0.0.0:8080")]
+    health_addr: String,
 }
 
 /// Duration timeout handler - exits when duration completes or cancellation token is triggered
@@ -289,8 +295,47 @@ async fn main() -> Result<()> {
 
     debug!("Parquet writer task initialized and ready to receive data");
 
+    // Readiness flag (true by default; may be constrained by resctrl checks)
+    let ready_flag = Arc::new(AtomicBool::new(true));
+
     // Optionally enable resctrl occupancy collection with a dedicated writer
     if opts.enable_resctrl {
+        // Check resctrl availability and set readiness accordingly; refresh periodically
+        {
+            let rc = resctrl::Resctrl::default();
+            let ready = match rc.detect_support() {
+                Ok(info) => info.mounted && info.writable,
+                Err(_) => false,
+            };
+            ready_flag.store(ready, Ordering::Relaxed);
+        }
+        // Spawn periodic readiness checker (resctrl availability)
+        {
+            let ready_flag = ready_flag.clone();
+            let shutdown = shutdown_token.clone();
+            task_tracker.spawn(task_completion_handler(
+                async move {
+                    let rc = resctrl::Resctrl::default();
+                    let mut tick = tokio::time::interval(Duration::from_secs(5));
+                    loop {
+                        tokio::select! {
+                            _ = shutdown.cancelled() => break,
+                            _ = tick.tick() => {
+                                let ready = match rc.detect_support() {
+                                    Ok(info) => info.mounted && info.writable,
+                                    Err(_) => false,
+                                };
+                                ready_flag.store(ready, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    Ok::<(), anyhow::Error>(())
+                },
+                shutdown_token.clone(),
+                "ResctrlReadinessChecker",
+            ));
+        }
+
         // Schema for occupancy
         let occ_schema = resctrl_collector::create_schema();
 
@@ -355,6 +400,17 @@ async fn main() -> Result<()> {
         shutdown_token.clone(),
         "RotationHandler",
     ));
+
+    // Spawn health HTTP server (readiness/liveness)
+    {
+        let addr = opts.health_addr.clone();
+        let ready_flag = ready_flag.clone();
+        task_tracker.spawn(task_completion_handler(
+            health_server::run(addr, ready_flag, shutdown_token.clone()),
+            shutdown_token.clone(),
+            "HealthServer",
+        ));
+    }
 
     // Create a BPF loader with the specified verbosity and appropriate buffer size
     let perf_ring_pages = if opts.trace {
