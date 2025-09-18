@@ -5,7 +5,6 @@ use bpf_sync_timer::SyncTimer;
 use clap::Parser;
 use log::{debug, error, info};
 use object_store::ObjectStore;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
@@ -295,47 +294,11 @@ async fn main() -> Result<()> {
 
     debug!("Parquet writer task initialized and ready to receive data");
 
-    // Readiness flag (true by default; may be constrained by resctrl checks)
-    let ready_flag = Arc::new(AtomicBool::new(true));
+    // Readiness provider for health server
+    let mut ready_provider: Option<Arc<dyn Fn() -> bool + Send + Sync>> = None;
 
     // Optionally enable resctrl occupancy collection with a dedicated writer
     if opts.enable_resctrl {
-        // Check resctrl availability and set readiness accordingly; refresh periodically
-        {
-            let rc = resctrl::Resctrl::default();
-            let ready = match rc.detect_support() {
-                Ok(info) => info.mounted && info.writable,
-                Err(_) => false,
-            };
-            ready_flag.store(ready, Ordering::Relaxed);
-        }
-        // Spawn periodic readiness checker (resctrl availability)
-        {
-            let ready_flag = ready_flag.clone();
-            let shutdown = shutdown_token.clone();
-            task_tracker.spawn(task_completion_handler(
-                async move {
-                    let rc = resctrl::Resctrl::default();
-                    let mut tick = tokio::time::interval(Duration::from_secs(5));
-                    loop {
-                        tokio::select! {
-                            _ = shutdown.cancelled() => break,
-                            _ = tick.tick() => {
-                                let ready = match rc.detect_support() {
-                                    Ok(info) => info.mounted && info.writable,
-                                    Err(_) => false,
-                                };
-                                ready_flag.store(ready, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    Ok::<(), anyhow::Error>(())
-                },
-                shutdown_token.clone(),
-                "ResctrlReadinessChecker",
-            ));
-        }
-
         // Schema for occupancy
         let occ_schema = resctrl_collector::create_schema();
 
@@ -370,11 +333,22 @@ async fn main() -> Result<()> {
 
         // Spawn the resctrl-collector loop
         let rcfg = resctrl_collector::ResctrlCollectorConfig::default();
+        let rc_instance = resctrl_collector::ResctrlCollector::new();
+        // Set ready provider based on collector readiness
+        ready_provider = Some({
+            let rc_clone = rc_instance.clone();
+            Arc::new(move || rc_clone.ready())
+        });
         task_tracker.spawn(task_completion_handler(
-            resctrl_collector::run(occ_sender, shutdown_token.clone(), rcfg),
+            resctrl_collector::run(rc_instance, occ_sender, shutdown_token.clone(), rcfg),
             shutdown_token.clone(),
             "ResctrlCollector",
         ));
+    }
+
+    // If resctrl not enabled, default readiness is true
+    if ready_provider.is_none() {
+        ready_provider = Some(Arc::new(|| true));
     }
 
     // Spawn duration timeout handler only if duration is non-zero
@@ -404,9 +378,9 @@ async fn main() -> Result<()> {
     // Spawn health HTTP server (readiness/liveness)
     {
         let addr = opts.health_addr.clone();
-        let ready_flag = ready_flag.clone();
+        let ready_fn = ready_provider.expect("ready provider");
         task_tracker.spawn(task_completion_handler(
-            health_server::run(addr, ready_flag, shutdown_token.clone()),
+            health_server::run(addr, ready_fn, shutdown_token.clone()),
             shutdown_token.clone(),
             "HealthServer",
         ));

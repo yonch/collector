@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -27,6 +28,25 @@ pub fn create_schema() -> SchemaRef {
         Field::new("resctrl_group", DataType::Utf8, true),
         Field::new("llc_occupancy_bytes", DataType::Int64, false),
     ]))
+}
+
+/// Resctrl collector instance state
+#[derive(Default)]
+pub struct ResctrlCollector {
+    resctrl_synced: AtomicBool,
+    metadata_synced: AtomicBool,
+}
+
+impl ResctrlCollector {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Returns true when both resctrl and metadata have produced at least
+    /// one event since startup, indicating initial synchronize completed.
+    pub fn ready(&self) -> bool {
+        self.resctrl_synced.load(Ordering::Relaxed) && self.metadata_synced.load(Ordering::Relaxed)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +83,7 @@ struct PodState {
 ///
 /// Best-effort: if NRI runtime is not available, the task runs idle.
 pub async fn run(
+    this: Arc<ResctrlCollector>,
     batch_sender: mpsc::Sender<RecordBatch>,
     shutdown: CancellationToken,
     cfg: ResctrlCollectorConfig,
@@ -235,6 +256,9 @@ pub async fn run(
             // Resctrl events
             maybe_ev = resctrl_rx.recv() => {
                 if let Some(ev) = maybe_ev {
+                    if !this.resctrl_synced.load(Ordering::Relaxed) {
+                        this.resctrl_synced.store(true, Ordering::Relaxed);
+                    }
                     match ev {
                         PodResctrlEvent::AddOrUpdate(add) => {
                             let entry = pods.entry(add.pod_uid.clone()).or_default();
@@ -256,6 +280,9 @@ pub async fn run(
             // Metadata events
             maybe_meta = meta_rx.recv() => {
                 if let Some(msg) = maybe_meta {
+                    if !this.metadata_synced.load(Ordering::Relaxed) {
+                        this.metadata_synced.store(true, Ordering::Relaxed);
+                    }
                     match msg {
                         MetadataMessage::Add(_cid, boxed) => {
                             let ContainerMetadata { pod_uid, pod_namespace, pod_name, .. } = *boxed;

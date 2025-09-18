@@ -105,6 +105,7 @@ Design Decisions and Open Questions
 3) Communication model: In-process Rust mpsc channels between the collector and NRI crates; no external IPC required.
 4) Label completeness: Ordering across channels is best-effort. If only cgroup info is available, record pod UID only; enrich later when metadata arrives.
 5) Time source: Use monotonic clock for scheduling and system clock for timestamps.
+6) Readiness semantics: `/ready` returns OK only after resctrl-collector observes initial synchronize events from both resctrl and metadata plugins (collector `ready()`), otherwise 503.
 
 Acceptance Criteria
 - `resctrl` crate exposes an API to read LLC occupancy for a given monitor group, with unit tests for path parsing and domain enumeration.

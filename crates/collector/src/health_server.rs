@@ -1,5 +1,4 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -8,7 +7,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 
-async fn handle_connection(mut stream: TcpStream, ready: Arc<AtomicBool>) -> Result<()> {
+type ReadyFn = Arc<dyn Fn() -> bool + Send + Sync + 'static>;
+
+async fn handle_connection(mut stream: TcpStream, ready_fn: ReadyFn) -> Result<()> {
     let mut buf = [0u8; 1024];
     let n = stream.read(&mut buf).await.unwrap_or(0);
     let req = String::from_utf8_lossy(&buf[..n]);
@@ -25,7 +26,7 @@ async fn handle_connection(mut stream: TcpStream, ready: Arc<AtomicBool>) -> Res
     let (status_line, body) = match path {
         "/live" => ("HTTP/1.1 200 OK\r\n", "live"),
         "/ready" => {
-            if ready.load(Ordering::Relaxed) {
+            if (ready_fn)() {
                 ("HTTP/1.1 200 OK\r\n", "ready")
             } else {
                 ("HTTP/1.1 503 Service Unavailable\r\n", "not ready")
@@ -50,7 +51,7 @@ async fn handle_connection(mut stream: TcpStream, ready: Arc<AtomicBool>) -> Res
     Ok(())
 }
 
-pub async fn run(addr: String, ready: Arc<AtomicBool>, shutdown: CancellationToken) -> Result<()> {
+pub async fn run(addr: String, ready_fn: ReadyFn, shutdown: CancellationToken) -> Result<()> {
     let addr: SocketAddr = addr.parse()?;
     let listener = TcpListener::bind(addr).await?;
     info!("Health server listening on {}", addr);
@@ -64,9 +65,9 @@ pub async fn run(addr: String, ready: Arc<AtomicBool>, shutdown: CancellationTok
             accept_res = listener.accept() => {
                 match accept_res {
                     Ok((stream, _peer)) => {
-                        let ready = ready.clone();
+                        let ready_fn = ready_fn.clone();
                         tokio::spawn(async move {
-                            let _ = handle_connection(stream, ready).await;
+                            let _ = handle_connection(stream, ready_fn).await;
                         });
                     }
                     Err(e) => {
