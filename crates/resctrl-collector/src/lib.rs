@@ -62,18 +62,18 @@ struct PodState {
 ///
 /// This isolates logic to make it easier to unit test individual handlers
 /// without having to run the full event loop and real plugins.
-struct ResctrlCollectorState {
+pub(crate) struct ResctrlCollectorState {
     this: Arc<ResctrlCollector>,
     pods: HashMap<String, PodState>,               // keyed by pod_uid
     pod_labels: HashMap<String, (String, String)>, // pod_uid -> (ns, name)
-    rc: resctrl::Resctrl,
+    llc_reader: Box<dyn LlcReader + Send + Sync>,
     schema: SchemaRef,
     batch_sender: mpsc::Sender<RecordBatch>,
     dropped_batches: u64,
 }
 
 impl ResctrlCollectorState {
-    fn new(
+    pub(crate) fn new(
         this: Arc<ResctrlCollector>,
         batch_sender: mpsc::Sender<RecordBatch>,
         cfg: &ResctrlCollectorConfig,
@@ -86,7 +86,7 @@ impl ResctrlCollectorState {
             this,
             pods: HashMap::new(),
             pod_labels: HashMap::new(),
-            rc,
+            llc_reader: Box::new(rc),
             schema: create_schema(),
             batch_sender,
             dropped_batches: 0,
@@ -94,7 +94,7 @@ impl ResctrlCollectorState {
     }
 
     /// Handle a periodic sampling tick: read group occupancies and emit a batch.
-    fn handle_sample_timer(&mut self) {
+    pub(crate) fn handle_sample_timer(&mut self) {
         let now_ns: i64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as i128)
@@ -118,7 +118,7 @@ impl ResctrlCollectorState {
 
             let mut rows_appended = 0usize;
             for (uid, gp) in groups_to_sample {
-                match self.rc.llc_occupancy_total_bytes(&gp) {
+                match self.llc_reader.llc_occupancy_total_bytes(&gp) {
                     Ok(total) => {
                         let labels = self.pod_labels.get(&uid).cloned();
                         ts_b.append_value(now_ns);
@@ -172,7 +172,16 @@ impl ResctrlCollectorState {
     }
 
     /// Handle periodic health logging.
-    fn handle_health_timer(&self) {
+    pub(crate) fn handle_health_timer(&self) {
+        let (failed, not_reconciled) = self.compute_health_counts();
+        info!(
+            "resctrl health: pods_failed={}, pods_unreconciled={}",
+            failed, not_reconciled
+        );
+    }
+
+    /// Compute health metrics for logging and tests.
+    pub(crate) fn compute_health_counts(&self) -> (usize, usize) {
         let mut failed = 0usize;
         let mut not_reconciled = 0usize;
         for (_uid, ps) in self.pods.iter() {
@@ -183,14 +192,11 @@ impl ResctrlCollectorState {
                 not_reconciled += 1;
             }
         }
-        info!(
-            "resctrl health: pods_failed={}, pods_unreconciled={}",
-            failed, not_reconciled
-        );
+        (failed, not_reconciled)
     }
 
     /// Handle a resctrl plugin event.
-    fn handle_resctrl_event(&mut self, ev: PodResctrlEvent) {
+    pub(crate) fn handle_resctrl_event(&mut self, ev: PodResctrlEvent) {
         if !self.this.resctrl_synced.load(Ordering::Relaxed) {
             self.this.resctrl_synced.store(true, Ordering::Relaxed);
         }
@@ -213,7 +219,7 @@ impl ResctrlCollectorState {
     }
 
     /// Handle a metadata plugin event.
-    fn handle_metadata_event(&mut self, msg: MetadataMessage) {
+    pub(crate) fn handle_metadata_event(&mut self, msg: MetadataMessage) {
         if !self.this.metadata_synced.load(Ordering::Relaxed) {
             self.this.metadata_synced.store(true, Ordering::Relaxed);
         }
@@ -236,10 +242,31 @@ impl ResctrlCollectorState {
     }
 
     /// Handle a retry tick by invoking the plugin's retry mechanism.
-    fn handle_retry_timer(&self, resctrl_plugin: &ResctrlPlugin) {
+    pub(crate) fn handle_retry_timer(&self, resctrl_plugin: &ResctrlPlugin) {
         if let Err(e) = resctrl_plugin.retry_all_once() {
             debug!("retry_all_once error: {:?}", e);
         }
+    }
+}
+
+/// Tiny indirection over resctrl for sampling, to enable hermetic tests.
+pub(crate) trait LlcReader {
+    fn llc_occupancy_total_bytes(&self, group_path: &str) -> anyhow::Result<u64>;
+}
+
+impl<P: resctrl::FsProvider> LlcReader for resctrl::Resctrl<P> {
+    fn llc_occupancy_total_bytes(&self, group_path: &str) -> anyhow::Result<u64> {
+        Ok(resctrl::Resctrl::llc_occupancy_total_bytes(
+            self, group_path,
+        )?)
+    }
+}
+
+#[cfg(test)]
+impl ResctrlCollectorState {
+    /// Test-only: override the LLC reader with a fake.
+    pub(crate) fn set_llc_reader_for_test(&mut self, reader: Box<dyn LlcReader + Send + Sync>) {
+        self.llc_reader = reader;
     }
 }
 
@@ -420,4 +447,453 @@ pub async fn run(
         jh.abort();
     }
     Ok(())
+}
+
+/// Test-only variant of the loop: inject receivers directly to avoid NRI runtime.
+#[cfg(test)]
+pub async fn run_with_injected_receivers(
+    this: Arc<ResctrlCollector>,
+    batch_sender: mpsc::Sender<RecordBatch>,
+    shutdown: CancellationToken,
+    cfg: ResctrlCollectorConfig,
+    mut resctrl_rx: mpsc::Receiver<PodResctrlEvent>,
+    mut meta_rx: mpsc::Receiver<MetadataMessage>,
+) -> Result<()> {
+    // Create dummy plugins for retry handler, but skip NRI wiring.
+    let resctrl_plugin = Arc::new(ResctrlPlugin::new(
+        ResctrlPluginConfig::default(),
+        // Unused here; create a throwaway sender to satisfy API
+        tokio::sync::mpsc::channel::<PodResctrlEvent>(cfg.channel_capacity).0,
+    ));
+
+    // Internal state
+    let mut state = ResctrlCollectorState::new(this.clone(), batch_sender, &cfg);
+
+    // Intervals
+    let mut sample_tick = tokio::time::interval(cfg.sample_interval);
+    let mut retry_tick = tokio::time::interval(cfg.retry_interval);
+    let mut health_tick = tokio::time::interval(cfg.health_interval);
+
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            _ = sample_tick.tick() => {
+                state.handle_sample_timer();
+            }
+            _ = retry_tick.tick() => {
+                state.handle_retry_timer(&resctrl_plugin);
+            }
+            _ = health_tick.tick() => {
+                state.handle_health_timer();
+            }
+            maybe_ev = resctrl_rx.recv() => {
+                if let Some(ev) = maybe_ev {
+                    state.handle_resctrl_event(ev);
+                }
+            }
+            maybe_meta = meta_rx.recv() => {
+                if let Some(msg) = maybe_meta {
+                    state.handle_metadata_event(msg);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::{Array, Int64Array, StringArray};
+    use nri::metadata::ContainerMetadata;
+    use nri_resctrl_plugin::{PodResctrlAddOrUpdate, PodResctrlRemoved};
+
+    struct FakeReader {
+        map: std::collections::HashMap<String, std::result::Result<u64, ()>>,
+    }
+    impl FakeReader {
+        fn new(map: std::collections::HashMap<String, std::result::Result<u64, ()>>) -> Self {
+            Self { map }
+        }
+    }
+    impl LlcReader for FakeReader {
+        fn llc_occupancy_total_bytes(&self, group_path: &str) -> anyhow::Result<u64> {
+            match self.map.get(group_path) {
+                Some(Ok(v)) => Ok(*v),
+                Some(Err(_)) => Err(anyhow::anyhow!("read error")),
+                None => Ok(0),
+            }
+        }
+    }
+
+    fn drain_one_batch(rx: &mut tokio::sync::mpsc::Receiver<RecordBatch>) -> Option<RecordBatch> {
+        rx.try_recv().ok()
+    }
+
+    #[tokio::test]
+    async fn l0b_ready_gating_via_handlers() {
+        let this = ResctrlCollector::new();
+        let (tx, _rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        assert!(!this.ready());
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u1".into(),
+            group_state: ResctrlGroupState::Exists("/sys/fs/resctrl/mon_groups/pod_u1".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        assert!(!this.ready());
+        st.handle_metadata_event(MetadataMessage::Add(
+            "c1".into(),
+            Box::new(ContainerMetadata {
+                container_id: "c1".into(),
+                pod_name: "p".into(),
+                pod_namespace: "ns".into(),
+                pod_uid: "u1".into(),
+                container_name: "n".into(),
+                cgroup_path: String::new(),
+                pid: None,
+                labels: Default::default(),
+                annotations: Default::default(),
+            }),
+        ));
+        assert!(this.ready());
+    }
+
+    #[tokio::test]
+    async fn l0b_schema_and_labeling() {
+        let this = ResctrlCollector::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        // Setup state: one pod, one group, with labels
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u1".into(),
+            group_state: ResctrlGroupState::Exists("/g1".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        st.handle_metadata_event(MetadataMessage::Add(
+            "c1".into(),
+            Box::new(ContainerMetadata {
+                container_id: "c1".into(),
+                pod_name: "p".into(),
+                pod_namespace: "ns".into(),
+                pod_uid: "u1".into(),
+                container_name: "n".into(),
+                cgroup_path: String::new(),
+                pid: None,
+                labels: Default::default(),
+                annotations: Default::default(),
+            }),
+        ));
+
+        // Inject fake reader
+        let mut map = std::collections::HashMap::new();
+        map.insert("/g1".to_string(), Ok(1234u64));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map)));
+
+        // Sample
+        st.handle_sample_timer();
+        let batch = drain_one_batch(&mut rx).expect("expected batch");
+        let schema = batch.schema();
+        assert_eq!(schema.field(0).name(), "timestamp");
+        assert_eq!(schema.field(1).name(), "pod_namespace");
+        assert_eq!(schema.field(2).name(), "pod_name");
+        assert_eq!(schema.field(3).name(), "pod_uid");
+        assert_eq!(schema.field(4).name(), "resctrl_group");
+        assert_eq!(schema.field(5).name(), "llc_occupancy_bytes");
+
+        // Validate row contents
+        assert_eq!(batch.num_rows(), 1);
+        let ns = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let name = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let uid = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let grp = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let llc = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+
+        assert_eq!(ns.value(0), "ns");
+        assert_eq!(name.value(0), "p");
+        assert_eq!(uid.value(0), "u1");
+        assert_eq!(grp.value(0), "/g1");
+        assert_eq!(llc.value(0), 1234);
+    }
+
+    #[tokio::test]
+    async fn l0b_missing_metadata_path() {
+        let this = ResctrlCollector::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u2".into(),
+            group_state: ResctrlGroupState::Exists("/g2".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        let mut map = std::collections::HashMap::new();
+        map.insert("/g2".to_string(), Ok(42u64));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map)));
+        st.handle_sample_timer();
+        let batch = drain_one_batch(&mut rx).expect("batch");
+        let ns = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let name = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(ns.is_null(0));
+        assert!(name.is_null(0));
+
+        // Now add metadata and sample again
+        let mut map2 = std::collections::HashMap::new();
+        map2.insert("/g2".to_string(), Ok(10u64));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map2)));
+        st.handle_metadata_event(MetadataMessage::Add(
+            "c2".into(),
+            Box::new(ContainerMetadata {
+                container_id: "c2".into(),
+                pod_name: "p2".into(),
+                pod_namespace: "ns2".into(),
+                pod_uid: "u2".into(),
+                container_name: "n2".into(),
+                cgroup_path: String::new(),
+                pid: None,
+                labels: Default::default(),
+                annotations: Default::default(),
+            }),
+        ));
+        st.handle_sample_timer();
+        let batch2 = drain_one_batch(&mut rx).expect("batch2");
+        let ns2 = batch2
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let name2 = batch2
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(ns2.value(0), "ns2");
+        assert_eq!(name2.value(0), "p2");
+    }
+
+    #[tokio::test]
+    async fn l0b_removal_lifecycle() {
+        let this = ResctrlCollector::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u3".into(),
+            group_state: ResctrlGroupState::Exists("/g3".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        let mut map = std::collections::HashMap::new();
+        map.insert("/g3".to_string(), Ok(1u64));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map)));
+        st.handle_sample_timer();
+        assert!(drain_one_batch(&mut rx).is_some());
+
+        // Remove the pod and sample again → no rows
+        st.handle_resctrl_event(PodResctrlEvent::Removed(PodResctrlRemoved {
+            pod_uid: "u3".into(),
+        }));
+        st.handle_sample_timer();
+        assert!(drain_one_batch(&mut rx).is_none());
+    }
+
+    #[tokio::test]
+    async fn l0b_error_handling_read_failure() {
+        let this = ResctrlCollector::new();
+        let (tx, mut rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u4".into(),
+            group_state: ResctrlGroupState::Exists("/g4".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        let mut map = std::collections::HashMap::new();
+        map.insert("/g4".to_string(), Err(()));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map)));
+        st.handle_sample_timer();
+        // No rows → no batch
+        assert!(drain_one_batch(&mut rx).is_none());
+    }
+
+    #[tokio::test]
+    async fn l0b_backpressure_drops() {
+        let this = ResctrlCollector::new();
+        let (tx, mut rx) = mpsc::channel(1); // small capacity to force drop
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this.clone(), tx, &cfg);
+
+        st.handle_resctrl_event(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+            pod_uid: "u5".into(),
+            group_state: ResctrlGroupState::Exists("/g5".into()),
+            total_containers: 1,
+            reconciled_containers: 1,
+        }));
+        let mut map = std::collections::HashMap::new();
+        map.insert("/g5".to_string(), Ok(77u64));
+        st.set_llc_reader_for_test(Box::new(FakeReader::new(map)));
+
+        // Two samples without draining → second should be dropped due to capacity=1
+        st.handle_sample_timer();
+        st.handle_sample_timer();
+        // Drain at most one batch (the first)
+        let first = drain_one_batch(&mut rx);
+        assert!(first.is_some());
+        // No second batch should be present
+        assert!(drain_one_batch(&mut rx).is_none());
+    }
+
+    #[test]
+    fn l0b_health_counts() {
+        let this = ResctrlCollector::new();
+        let (tx, _rx) = mpsc::channel(4);
+        let cfg = ResctrlCollectorConfig::default();
+        let mut st = ResctrlCollectorState::new(this, tx, &cfg);
+
+        // One failed (no group), one unreconciled, one healthy
+        st.pods.insert(
+            "uA".into(),
+            PodState {
+                group_path: None,
+                total_containers: 1,
+                reconciled_containers: 0,
+            },
+        );
+        st.pods.insert(
+            "uB".into(),
+            PodState {
+                group_path: Some("/gB".into()),
+                total_containers: 2,
+                reconciled_containers: 1,
+            },
+        );
+        st.pods.insert(
+            "uC".into(),
+            PodState {
+                group_path: Some("/gC".into()),
+                total_containers: 1,
+                reconciled_containers: 1,
+            },
+        );
+
+        let (failed, not_reconciled) = st.compute_health_counts();
+        assert_eq!(failed, 1);
+        assert_eq!(not_reconciled, 2); // uA and uB
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn l2_run_smoke_ticks_and_shutdown() -> anyhow::Result<()> {
+        use tokio::time::{advance, Duration};
+        let this = ResctrlCollector::new();
+        let (tx, mut _rx) = tokio::sync::mpsc::channel(4);
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let cfg = ResctrlCollectorConfig {
+            sample_interval: Duration::from_millis(10),
+            retry_interval: Duration::from_millis(10),
+            health_interval: Duration::from_millis(10),
+            channel_capacity: 4,
+            mountpoint: "/does/not/exist".into(),
+        };
+        let jh = tokio::spawn(run(this.clone(), tx, shutdown.clone(), cfg));
+        advance(Duration::from_millis(10)).await; // sample
+        advance(Duration::from_millis(10)).await; // health
+        assert!(!this.ready()); // no events yet
+        shutdown.cancel();
+        jh.await??;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn l2_ready_gating_with_events() -> anyhow::Result<()> {
+        use tokio::time::{advance, Duration};
+        let this = ResctrlCollector::new();
+        let (batch_tx, mut _batch_rx) = tokio::sync::mpsc::channel(4);
+        let (resctrl_tx, resctrl_rx) = tokio::sync::mpsc::channel(8);
+        let (meta_tx, meta_rx) = tokio::sync::mpsc::channel(8);
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let cfg = ResctrlCollectorConfig::default();
+        let jh = tokio::spawn(run_with_injected_receivers(
+            this.clone(),
+            batch_tx,
+            shutdown.clone(),
+            cfg,
+            resctrl_rx,
+            meta_rx,
+        ));
+        assert!(!this.ready());
+        resctrl_tx
+            .send(PodResctrlEvent::AddOrUpdate(PodResctrlAddOrUpdate {
+                pod_uid: "u1".into(),
+                group_state: ResctrlGroupState::Exists("g1".into()),
+                total_containers: 1,
+                reconciled_containers: 1,
+            }))
+            .await
+            .unwrap();
+        advance(Duration::from_millis(1)).await;
+        assert!(!this.ready());
+        meta_tx
+            .send(MetadataMessage::Add(
+                "c1".into(),
+                Box::new(ContainerMetadata {
+                    container_id: "c1".into(),
+                    pod_name: "p".into(),
+                    pod_namespace: "ns".into(),
+                    pod_uid: "u1".into(),
+                    container_name: "cn".into(),
+                    cgroup_path: String::new(),
+                    pid: None,
+                    labels: Default::default(),
+                    annotations: Default::default(),
+                }),
+            ))
+            .await
+            .unwrap();
+        advance(Duration::from_millis(1)).await;
+        assert!(this.ready());
+        shutdown.cancel();
+        jh.await??;
+        Ok(())
+    }
 }
