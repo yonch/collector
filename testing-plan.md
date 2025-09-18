@@ -194,7 +194,6 @@ Approach
 - Use the Helm chart to run the collector as a DaemonSet with resctrl enabled and storage.type=local for simple file inspection.
 
 Environment Options
-- KIND (v0.27.0+) with containerd 2.x and NRI enabled by default.
 - K3s release with containerd 2.x (see docs/nri-setup.md for version matrix).
 - Node must expose /sys/fs/resctrl and permit read access from the collector pod (chart mounts host path).
 
@@ -238,12 +237,12 @@ Artifacts & Inspection
 - Capture collector logs to verify health summaries and drop warnings.
 
 CI Integration
-- Add a CI job that provisions a KIND cluster (v0.27.0+), installs the Helm chart with local storage, runs workload, gathers Parquet files, and performs schema/row assertions (e.g., via a small Rust or Python checker step).
+- Add a CI job to test-ebpf-collector.yaml that provisions a K3s using our setup-k3s action, installs the Helm chart with local storage, runs workload, gathers Parquet files, and performs schema/row assertions (e.g., via a small Rust or Python checker step).
 - Gate E2E behind a label or nightly schedule due to kernel and privilege requirements; keep L0 hermetic handler tests in the default PR workflow.
 
 Risks & Mitigations
 - Hardware/kernel feature dependency: skip E2E when resctrl is unavailable; rely on hermetic L2.
-- NRI absent on some runners: use KIND ≥ v0.27.0 to ensure containerd 2.x with NRI.
+- NRI absent on some runners: use K3s with default k8s version (which will pick a recent version) to ensure containerd 2.x with NRI.
 - Flaky timing in async tests: prefer deterministic waiting on channels over sleeps; bound with generous timeouts.
 
 Success Criteria
