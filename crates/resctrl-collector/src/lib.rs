@@ -51,6 +51,198 @@ impl ResctrlCollector {
     }
 }
 
+#[derive(Default)]
+struct PodState {
+    group_path: Option<String>,
+    total_containers: usize,
+    reconciled_containers: usize,
+}
+
+/// Internal mutable state and handlers for the collector.
+///
+/// This isolates logic to make it easier to unit test individual handlers
+/// without having to run the full event loop and real plugins.
+struct ResctrlCollectorState {
+    this: Arc<ResctrlCollector>,
+    pods: HashMap<String, PodState>,               // keyed by pod_uid
+    pod_labels: HashMap<String, (String, String)>, // pod_uid -> (ns, name)
+    rc: resctrl::Resctrl,
+    schema: SchemaRef,
+    batch_sender: mpsc::Sender<RecordBatch>,
+    dropped_batches: u64,
+}
+
+impl ResctrlCollectorState {
+    fn new(
+        this: Arc<ResctrlCollector>,
+        batch_sender: mpsc::Sender<RecordBatch>,
+        cfg: &ResctrlCollectorConfig,
+    ) -> Self {
+        let rc = resctrl::Resctrl::new(resctrl::Config {
+            root: cfg.mountpoint.clone(),
+            ..Default::default()
+        });
+        Self {
+            this,
+            pods: HashMap::new(),
+            pod_labels: HashMap::new(),
+            rc,
+            schema: create_schema(),
+            batch_sender,
+            dropped_batches: 0,
+        }
+    }
+
+    /// Handle a periodic sampling tick: read group occupancies and emit a batch.
+    fn handle_sample_timer(&mut self) {
+        let now_ns: i64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i128)
+            .unwrap_or(0) as i64;
+
+        // Snapshot groups to sample to avoid holding borrows
+        let groups_to_sample: Vec<(String, String)> = self
+            .pods
+            .iter()
+            .filter_map(|(uid, ps)| ps.group_path.as_ref().map(|gp| (uid.clone(), gp.clone())))
+            .collect();
+
+        let rows_cap = groups_to_sample.len();
+        if rows_cap > 0 {
+            let mut ts_b = Int64Builder::with_capacity(rows_cap);
+            let mut ns_b = StringBuilder::with_capacity(rows_cap, rows_cap * 16);
+            let mut name_b = StringBuilder::with_capacity(rows_cap, rows_cap * 16);
+            let mut uid_b = StringBuilder::with_capacity(rows_cap, rows_cap * 16);
+            let mut grp_b = StringBuilder::with_capacity(rows_cap, rows_cap * 24);
+            let mut llc_b = Int64Builder::with_capacity(rows_cap);
+
+            let mut rows_appended = 0usize;
+            for (uid, gp) in groups_to_sample {
+                match self.rc.llc_occupancy_total_bytes(&gp) {
+                    Ok(total) => {
+                        let labels = self.pod_labels.get(&uid).cloned();
+                        ts_b.append_value(now_ns);
+                        if let Some((ns, name)) = labels {
+                            ns_b.append_value(ns.as_str());
+                            name_b.append_value(name.as_str());
+                        } else {
+                            ns_b.append_null();
+                            name_b.append_null();
+                        }
+                        uid_b.append_value(uid.as_str());
+                        grp_b.append_value(gp.as_str());
+                        llc_b.append_value(total as i64);
+                        rows_appended += 1;
+                    }
+                    Err(e) => {
+                        debug!("resctrl read failed for {}: {}", gp, e);
+                    }
+                }
+            }
+
+            if rows_appended > 0 {
+                let arrays: Vec<ArrayRef> = vec![
+                    Arc::new(ts_b.finish()),
+                    Arc::new(ns_b.finish()),
+                    Arc::new(name_b.finish()),
+                    Arc::new(uid_b.finish()),
+                    Arc::new(grp_b.finish()),
+                    Arc::new(llc_b.finish()),
+                ];
+                let batch = match RecordBatch::try_new(self.schema.clone(), arrays) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        debug!("failed to build occupancy batch: {}", e);
+                        return;
+                    }
+                };
+                if let Err(_e) = self.batch_sender.try_send(batch) {
+                    self.dropped_batches += 1;
+                }
+            }
+        }
+
+        if self.dropped_batches > 0 {
+            warn!(
+                "Dropped {} occupancy batches in the last second",
+                self.dropped_batches
+            );
+            self.dropped_batches = 0;
+        }
+    }
+
+    /// Handle periodic health logging.
+    fn handle_health_timer(&self) {
+        let mut failed = 0usize;
+        let mut not_reconciled = 0usize;
+        for (_uid, ps) in self.pods.iter() {
+            if ps.group_path.is_none() {
+                failed += 1;
+            }
+            if ps.reconciled_containers < ps.total_containers {
+                not_reconciled += 1;
+            }
+        }
+        info!(
+            "resctrl health: pods_failed={}, pods_unreconciled={}",
+            failed, not_reconciled
+        );
+    }
+
+    /// Handle a resctrl plugin event.
+    fn handle_resctrl_event(&mut self, ev: PodResctrlEvent) {
+        if !self.this.resctrl_synced.load(Ordering::Relaxed) {
+            self.this.resctrl_synced.store(true, Ordering::Relaxed);
+        }
+        match ev {
+            PodResctrlEvent::AddOrUpdate(add) => {
+                let entry = self.pods.entry(add.pod_uid.clone()).or_default();
+                entry.total_containers = add.total_containers;
+                entry.reconciled_containers = add.reconciled_containers;
+                if let ResctrlGroupState::Exists(p) = add.group_state {
+                    entry.group_path = Some(p);
+                } else {
+                    entry.group_path = None;
+                }
+            }
+            PodResctrlEvent::Removed(r) => {
+                self.pods.remove(&r.pod_uid);
+                self.pod_labels.remove(&r.pod_uid);
+            }
+        }
+    }
+
+    /// Handle a metadata plugin event.
+    fn handle_metadata_event(&mut self, msg: MetadataMessage) {
+        if !self.this.metadata_synced.load(Ordering::Relaxed) {
+            self.this.metadata_synced.store(true, Ordering::Relaxed);
+        }
+        match msg {
+            MetadataMessage::Add(_cid, boxed) => {
+                let ContainerMetadata {
+                    pod_uid,
+                    pod_namespace,
+                    pod_name,
+                    ..
+                } = *boxed;
+                if !pod_uid.is_empty() {
+                    self.pod_labels.insert(pod_uid, (pod_namespace, pod_name));
+                }
+            }
+            MetadataMessage::Remove(_cid) => {
+                // nothing to do at pod map
+            }
+        }
+    }
+
+    /// Handle a retry tick by invoking the plugin's retry mechanism.
+    fn handle_retry_timer(&self, resctrl_plugin: &ResctrlPlugin) {
+        if let Err(e) = resctrl_plugin.retry_all_once() {
+            debug!("retry_all_once error: {:?}", e);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResctrlCollectorConfig {
     /// Sampling interval
@@ -118,13 +310,6 @@ impl ResctrlCollectorConfig {
     }
 }
 
-#[derive(Default)]
-struct PodState {
-    group_path: Option<String>,
-    total_containers: usize,
-    reconciled_containers: usize,
-}
-
 /// Run the resctrl collector loop.
 ///
 /// Best-effort: if NRI runtime is not available, the task runs idle.
@@ -178,24 +363,13 @@ pub async fn run(
     let nri_resctrl = connect_plugin(resctrl_plugin.clone(), "resctrl-plugin", "10").await?;
     let nri_meta = connect_plugin(meta_plugin.clone(), "metadata-plugin", "10").await?;
 
-    // State maps
-    let mut pods: HashMap<String, PodState> = HashMap::new(); // keyed by pod_uid
-    let mut pod_labels: HashMap<String, (String, String)> = HashMap::new(); // pod_uid -> (ns, name)
-
-    // Resctrl access
-    let rc = resctrl::Resctrl::new(resctrl::Config {
-        root: cfg.mountpoint.clone(),
-        ..Default::default()
-    });
+    // Internal state
+    let mut state = ResctrlCollectorState::new(this.clone(), batch_sender, &cfg);
 
     // Intervals
     let mut sample_tick = tokio::time::interval(cfg.sample_interval);
     let mut retry_tick = tokio::time::interval(cfg.retry_interval);
     let mut health_tick = tokio::time::interval(cfg.health_interval);
-
-    // Drop accounting
-    let mut dropped_batches: u64 = 0;
-    let schema = create_schema();
 
     // Lifecycle join handles (detached through completion handler in caller typically)
     let (mut nri_resctrl_handle, mut nri_meta_handle) = (None, None);
@@ -213,133 +387,26 @@ pub async fn run(
             }
             // Periodic sample
             _ = sample_tick.tick() => {
-                let now_ns: i64 = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as i128)
-                    .unwrap_or(0) as i64;
-
-                // Snapshot groups to sample to avoid holding borrows
-                let groups_to_sample: Vec<(String, String)> = pods
-                    .iter()
-                    .filter_map(|(uid, ps)| ps.group_path.as_ref().map(|gp| (uid.clone(), gp.clone())))
-                    .collect();
-
-                let mut rows = 0usize;
-                type SampleRow = (Option<(String, String)>, String, String, i64);
-                let mut samples: Vec<SampleRow> = Vec::new();
-                for (uid, gp) in groups_to_sample {
-                    match rc.llc_occupancy_total_bytes(&gp) {
-                        Ok(total) => {
-                            let labels = pod_labels.get(&uid).cloned();
-                            samples.push((labels, uid, gp, total as i64));
-                            rows += 1;
-                        }
-                        Err(e) => {
-                            debug!("resctrl read failed for {}: {}", gp, e);
-                        }
-                    }
-                }
-
-                if rows > 0 {
-                    let mut ts_b = Int64Builder::with_capacity(rows);
-                    let mut ns_b = StringBuilder::with_capacity(rows, rows * 16);
-                    let mut name_b = StringBuilder::with_capacity(rows, rows * 16);
-                    let mut uid_b = StringBuilder::with_capacity(rows, rows * 16);
-                    let mut grp_b = StringBuilder::with_capacity(rows, rows * 24);
-                    let mut llc_b = Int64Builder::with_capacity(rows);
-
-                    for (labels, uid, group_path, total) in samples.into_iter() {
-                        ts_b.append_value(now_ns);
-                        if let Some((ns, name)) = labels {
-                            ns_b.append_value(ns.as_str());
-                            name_b.append_value(name.as_str());
-                        } else {
-                            ns_b.append_null();
-                            name_b.append_null();
-                        }
-                        uid_b.append_value(uid.as_str());
-                        grp_b.append_value(group_path.as_str());
-                        llc_b.append_value(total);
-                    }
-
-                    let arrays: Vec<ArrayRef> = vec![
-                        Arc::new(ts_b.finish()),
-                        Arc::new(ns_b.finish()),
-                        Arc::new(name_b.finish()),
-                        Arc::new(uid_b.finish()),
-                        Arc::new(grp_b.finish()),
-                        Arc::new(llc_b.finish()),
-                    ];
-                    let batch = match RecordBatch::try_new(schema.clone(), arrays) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            debug!("failed to build occupancy batch: {}", e);
-                            continue;
-                        }
-                    };
-                    if let Err(_e) = batch_sender.try_send(batch) {
-                        dropped_batches += 1;
-                    }
-                }
-
-                if dropped_batches > 0 {
-                    warn!("Dropped {} occupancy batches in the last second", dropped_batches);
-                    dropped_batches = 0;
-                }
+                state.handle_sample_timer();
             }
             // Retry plugin work if connected
             _ = retry_tick.tick(), if nri_resctrl_handle.is_some() => {
-                if let Err(e) = resctrl_plugin.retry_all_once() {
-                    debug!("retry_all_once error: {:?}", e);
-                }
+                state.handle_retry_timer(&resctrl_plugin);
             }
             // Health logging
             _ = health_tick.tick() => {
-                let mut failed = 0usize;
-                let mut not_reconciled = 0usize;
-                for (_uid, ps) in pods.iter() {
-                    if ps.group_path.is_none() { failed += 1; }
-                    if ps.reconciled_containers < ps.total_containers { not_reconciled += 1; }
-                }
-                info!("resctrl health: pods_failed={}, pods_unreconciled={}", failed, not_reconciled);
+                state.handle_health_timer();
             }
             // Resctrl events
             maybe_ev = resctrl_rx.recv() => {
                 if let Some(ev) = maybe_ev {
-                    if !this.resctrl_synced.load(Ordering::Relaxed) {
-                        this.resctrl_synced.store(true, Ordering::Relaxed);
-                    }
-                    match ev {
-                        PodResctrlEvent::AddOrUpdate(add) => {
-                            let entry = pods.entry(add.pod_uid.clone()).or_default();
-                            entry.total_containers = add.total_containers;
-                            entry.reconciled_containers = add.reconciled_containers;
-                            if let ResctrlGroupState::Exists(p) = add.group_state {
-                                entry.group_path = Some(p);
-                            } else {
-                                entry.group_path = None;
-                            }
-                        }
-                        PodResctrlEvent::Removed(r) => {
-                            pods.remove(&r.pod_uid);
-                            pod_labels.remove(&r.pod_uid);
-                        }
-                    }
+                    state.handle_resctrl_event(ev);
                 }
             }
             // Metadata events
             maybe_meta = meta_rx.recv() => {
                 if let Some(msg) = maybe_meta {
-                    if !this.metadata_synced.load(Ordering::Relaxed) {
-                        this.metadata_synced.store(true, Ordering::Relaxed);
-                    }
-                    match msg {
-                        MetadataMessage::Add(_cid, boxed) => {
-                            let ContainerMetadata { pod_uid, pod_namespace, pod_name, .. } = *boxed;
-                            if !pod_uid.is_empty() { pod_labels.insert(pod_uid, (pod_namespace, pod_name)); }
-                        }
-                        MetadataMessage::Remove(_cid) => { /* nothing to do at pod map */ }
-                    }
+                    state.handle_metadata_event(msg);
                 }
             }
         }
