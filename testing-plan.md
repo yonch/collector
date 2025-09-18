@@ -1,4 +1,4 @@
-Title: Integration Test Plan — resctrl-collector (LLC occupancy via Linux resctrl)
+Title: Test Plan — resctrl-collector after handler refactor
 
 Context
 - Source issue: issue-cache-collection.md
@@ -9,92 +9,98 @@ Context
   - Collector binary integration: crates/collector/src/main.rs
 
 Objectives
-- Validate end-to-end behavior for per-pod LLC occupancy sampling at 1 Hz and persistence to Parquet, including readiness gating and resilience.
+- Validate correctness of handler-level logic (handle_* functions) independently, with fast, hermetic unit tests.
+- Validate end-to-end behavior for per-pod LLC occupancy sampling and persistence to Parquet, including readiness gating and resilience.
 - Verify correctness of labeling (namespace, pod name, UID) and group mapping across lifecycle events.
 - Exercise failure paths (resctrl unavailable, invalid values, backpressure) and ensure graceful degradation with observable signals.
 
 Test Scope & Levels
-- L0 Unit (already present): resctrl crate parses domain files and aggregates totals.
+- L0a Unit — resctrl crate (already present): parses domain files and aggregates totals.
+- L0b Unit — collector handlers (new): test handle_* functions in crates/resctrl-collector/src/lib.rs in isolation with fakes/mocks.
 - L1 Plugin Integration (already present): nri-resctrl-plugin responds to NRI events and manages groups/tasks.
-- L2 Collector Integration (this plan): resctrl-collector consumes plugin + metadata streams, samples resctrl, emits Arrow RecordBatches with correct schema and values.
-- L3 Binary E2E (this plan): full collector binary with resctrl enabled writes Parquet files on a resctrl-capable node; readiness and rotation behave as expected.
+- L2 Collector Integration: minimal smoke of run() to cover wiring and readiness.
+- L3 Binary E2E: full collector binary with resctrl enabled writes Parquet; readiness and rotation behave as expected.
 
 Key Behaviors To Verify
-- Schema correctness for occupancy batches: crates/resctrl-collector/src/lib.rs:23
-- Readiness gating: resctrl enabled implies readiness waits for first events from both resctrl and metadata: crates/resctrl-collector/src/lib.rs:49, crates/collector/src/main.rs:342
-- Sampling interval and drop-on-backpressure behavior: crates/resctrl-collector/src/lib.rs:192, crates/resctrl-collector/src/lib.rs:285
-- Multi-domain L3 aggregation correctness: crates/resctrl/src/lib.rs:119
-- Error handling: invalid or missing llc_occupancy values do not crash sampling loop; events continue: crates/resctrl-collector/src/lib.rs:238
-- Health logging counts for failed groups and unreconciled containers: crates/resctrl-collector/src/lib.rs:206
-- Env-driven configuration honored (RESCTRL_*): crates/resctrl-collector/src/lib.rs:80
+- Schema correctness for occupancy batches: crates/resctrl-collector/src/lib.rs (create_schema).
+- Readiness gating: ready() flips only after at least one resctrl and one metadata event.
+- Sampling and drop-on-backpressure behavior: handle_sample_timer aggregates, emits, and rate-logs drops.
+- Multi-domain aggregation correctness: verified in crates/resctrl (llc_occupancy_total_bytes); collector propagates totals into batches.
+- Error handling: invalid or missing llc_occupancy values skip rows, loop continues.
+- Health logging counts for failed groups and unreconciled containers: handle_health_timer logs expected summary.
+- Env-driven configuration honored (RESCTRL_*): ResctrlCollectorConfig::from_env.
 
 Prerequisites
-- Linux kernel with resctrl support for L3 monitoring.
-- NRI runtime socket available (containerd 2.x default) or enabled per docs/nri-setup.md.
-- For hermetic/in-process tests, ability to run Tokio tests and write to a temp filesystem (no kernel features required when using a fake resctrl tree).
+- Linux kernel with resctrl support for L3 monitoring (for E2E only).
+- NRI runtime socket available (containerd 2.x default) or enabled per docs/nri-setup.md (for E2E only).
+- For unit/in-process tests, only Tokio and an in-memory fake or temp filesystem; no kernel features required.
 
-L2: In-Process Integration Tests (Hermetic)
+L0b: Handler Unit Tests (Hermetic)
 
 Approach
-- Add minimal testability hooks gated behind a test-only feature to avoid production impact.
-- Keep all logic identical to production by executing the same sampling loop and Arrow batch construction.
+- Exercise handler functions directly without spawning the run() loop.
+- Inject a fake occupancy reader into sampling logic via a small trait to avoid touching the real filesystem.
 
 Testability Hooks (small additions)
-- Add a cfg(test) constructor to resctrl-collector that accepts:
-  - Injected receivers for resctrl events and metadata messages (tokio mpsc::Receiver).
-  - A Resctrl instance configured with a test mountpoint (PathBuf) for reading occupancy.
-  - Timing parameters (shortened sampling/health intervals).
-- Rationale: run() currently creates channels and plugins internally, making controlled event injection impossible during tests. This DI surface is strictly cfg(test) and mirrors production loop semantics.
+- Define a tiny trait in crates/resctrl-collector for sampling:
+  trait LlcReader { fn llc_occupancy_total_bytes(&self, group_path: &str) -> anyhow::Result<u64>; }
+  - Implement for resctrl::Resctrl so production code remains unchanged.
+  - In tests, implement a FakeLlcReader to return canned values or errors per group.
+- Update handle_sample_timer to accept a &dyn LlcReader (or make ResctrlCollectorState generic over LlcReader). Production path passes the real resctrl handle.
+- Keep ResctrlCollectorState and handlers pub(crate) so crate-local tests can instantiate and drive them.
 
 Fixtures
-- Build a temporary directory tree to simulate a resctrl monitor group:
-  - <tmp>/mon_groups/pod_testuid/mon_data/mon_L3_00/llc_occupancy
-  - <tmp>/mon_groups/pod_testuid/mon_data/mon_L3_01/llc_occupancy
-- Write known numeric values to llc_occupancy files.
+- Minimal: mpsc::channel<RecordBatch> with small capacity for backpressure tests.
+- FakeLlcReader map: group_path → Result<u64> to control sampling outcomes.
 
 Test Cases (Hermetic)
-1) Ready Gating (Cold Start)
-   - Start loop with injected channels and no messages → ready() is false.
-   - Send one PodResctrlEvent::AddOrUpdate for a pod with group path pointing to temp group; send one MetadataMessage::Add for the same pod UID.
+1) Ready Gating via handlers
+   - Instantiate ResctrlCollector and ResctrlCollectorState with a dummy sender.
+   - Assert ready() is false; call handle_resctrl_event(AddOrUpdate with Exists) and handle_metadata_event(Add) once each.
    - Expect ready() becomes true.
 
 2) Schema and Labeling
-   - After case (1), wait a few ticks, collect one emitted RecordBatch from the batch receiver.
-   - Validate Arrow schema fields exist and types match: timestamp(i64), pod_namespace(utf8, nullable), pod_name(utf8, nullable), pod_uid(utf8), resctrl_group(utf8), llc_occupancy_bytes(i64).
-   - Confirm row contains labels from metadata (namespace/name) and the UID/group path sent in events.
+   - Use FakeLlcReader to return a fixed total for a known group path.
+   - After sending AddOrUpdate + Add metadata for a UID, call handle_sample_timer with the fake reader.
+   - Receive one RecordBatch; validate schema fields and that row contains namespace/name/uid/group and the expected llc_occupancy_bytes value.
 
-3) Multi-Domain Aggregation
-   - With two mon_L3_* files present (e.g., 123 and 456), expect llc_occupancy_bytes == 579.
-   - Remove one domain dir between ticks; ensure totals reflect remaining domain only.
+3) Missing Metadata Path
+   - Send only AddOrUpdate (no metadata); sample.
+   - Expect ns/name columns are NULL while uid/group and llc are populated; after sending metadata and sampling again, labels appear.
 
-4) Missing Metadata Path
-   - Send only PodResctrlEvent::AddOrUpdate (no metadata yet).
-   - Expect ns/name columns are NULL while uid/group and llc value are populated; labels populate on subsequent batches after metadata arrives.
+4) Removal Lifecycle
+   - After initial sampling, send Removed for the pod UID.
+   - Subsequent samples emit no rows for that UID.
 
-5) Removal Lifecycle
-   - After initial sampling, send PodResctrlEvent::Removed for the pod UID; remove fake group tree.
-   - Expect no further rows for that UID after a grace tick; loop continues for other pods if present.
+5) Error Handling: Read Failure
+   - Configure FakeLlcReader to return an error for the group.
+   - Sampling should skip the row and not send a batch; assert via receiver emptiness and presence of a debug log.
 
-6) Error Handling: Invalid Values
-   - Write a non-numeric llc_occupancy value; expect the row is skipped with a debug log and loop continues.
-   - Restore valid values; rows resume without crash.
+6) Backpressure/Drops
+   - Create batch channel with capacity 1; perform two samples without draining the receiver to force try_send failure.
+   - Capture logs; expect a warning of the form "Dropped N occupancy batches..." and that only one batch was received.
 
-7) Backpressure/Drops
-   - Configure channel_capacity to a very small number (e.g., 1) and sample_interval to ~10–20ms.
-   - Intentionally block the downstream batch receiver for >1s to force try_send failures.
-   - Expect fewer batches received than ticks and a warning log once per second indicating dropped count.
+7) Health Logging
+   - Drive state via handle_resctrl_event calls to produce pods with group_path None and with reconciled_containers < total_containers.
+   - Call handle_health_timer; assert a single info log line summarizing failed and unreconciled counts.
 
-8) Health Logging
-   - Emit AddOrUpdate events with ResctrlGroupState::Failed and with total_containers > reconciled_containers.
-   - After health_interval, assert a log line exists like "resctrl health: pods_failed=..., pods_unreconciled=..." with correct counts.
-
-9) Env Configuration
+8) Env Configuration
    - Set RESCTRL_SAMPLING_INTERVAL, RESCTRL_RETRY_INTERVAL, RESCTRL_HEALTH_INTERVAL, RESCTRL_CHANNEL_CAPACITY, RESCTRL_MOUNT with non-default values.
    - Build config via ResctrlCollectorConfig::from_env() and assert fields match.
 
 Deliverables (Hermetic)
-- tests/integration_resctrl_collector.rs under crates/resctrl-collector with #[tokio::test] cases above.
-- cfg(test) helper in crates/resctrl-collector/src/lib.rs to run a loop with injected receivers and a custom Resctrl instance.
+- Unit tests colocated in crates/resctrl-collector/src/lib.rs under #[cfg(test)] to access private handler/state.
+- Tiny LlcReader trait and impl (production and test fakes) in crates/resctrl-collector.
+
+L2: Collector Integration (run loop, smoke)
+
+Approach
+- Exercise resctrl_collector::run with a short sampling/health interval and a real mpsc sender.
+- Do not depend on NRI connectivity; the loop runs even when plugins fail to connect.
+
+Assertions
+- Start run() with a shutdown token; ensure it starts, ticks at least once (e.g., by observing a harmless sample with no pods), and stops cleanly on cancellation.
+- Ready provider in crates/collector uses ResctrlCollector::ready(); verify default readiness gating behavior remains false until both event types are observed (unit-tested above).
 
 L3: Binary E2E (Cluster or Single-Node)
 
@@ -122,13 +128,13 @@ Workload
 
 Assertions
 1) Readiness
-   - Health endpoint /ready should transition from false to true only after both metadata and resctrl events are observed.
+   - Health endpoint /ready transitions from false to true only after both metadata and resctrl events are observed.
    - For resctrl disabled or unavailable nodes, /ready remains false when resctrl.enabled=true.
 
 2) Parquet Output
    - Files with prefix resctrl-occupancy-... appear in the configured local storage path.
    - Using parquet-tools or Rust parquet reader, validate schema fields and that rows exist for active pods with non-zero llc_occupancy_bytes.
-   - Validate partitioning/rotation via SIGUSR1 to the resctrl writer process (see crates/collector/src/main.rs:355 for rotation wiring).
+   - Validate partitioning/rotation via SIGUSR1 to the resctrl writer process (see rotation wiring in crates/collector/src/main.rs).
 
 3) Labeling
    - Rows contain pod_namespace, pod_name, and pod_uid matching the running workloads.
@@ -148,7 +154,7 @@ Artifacts & Inspection
 
 CI Integration
 - Add a CI job that provisions a KIND cluster (v0.27.0+), installs the Helm chart with local storage, runs workload, gathers Parquet files, and performs schema/row assertions (e.g., via a small Rust or Python checker step).
-- Gate E2E behind a label or nightly schedule due to kernel and privilege requirements; keep L2 hermetic tests in the default PR workflow.
+- Gate E2E behind a label or nightly schedule due to kernel and privilege requirements; keep L0 hermetic handler tests in the default PR workflow.
 
 Risks & Mitigations
 - Hardware/kernel feature dependency: skip E2E when resctrl is unavailable; rely on hermetic L2.
@@ -156,5 +162,5 @@ Risks & Mitigations
 - Flaky timing in async tests: prefer deterministic waiting on channels over sleeps; bound with generous timeouts.
 
 Success Criteria
-- L2 tests consistently pass on CI without kernel dependencies.
+- L0b handler unit tests consistently pass on CI without kernel dependencies.
 - L3 E2E demonstrates non-zero llc_occupancy_bytes per active pod with correct labels and schema; readiness and rotation behave as designed.
