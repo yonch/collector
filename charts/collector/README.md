@@ -180,6 +180,10 @@ resctrl:
   enabled: false        # Disabled by default
   samplingInterval: "1s"
   mountpoint: "/sys/fs/resctrl"  # Host mount path for resctrl
+  # Distinct filename/object prefix for resctrl outputs
+  # Unlike the main collector stream (which uses `storage.prefix`),
+  # resctrl files use this separate prefix to avoid mixing outputs.
+  prefix: "resctrl-occupancy-"
 ```
 
 Notes:
@@ -245,3 +249,4 @@ The Memory Collector requires access to host resources and kernel facilities, wh
 | `resctrl.enabled` | Enable resctrl LLC occupancy collector | `false` |
 | `resctrl.samplingInterval` | Sampling interval for resctrl collector | `"1s"` |
 | `resctrl.mountpoint` | Host mount path to mount in the pod | `"/sys/fs/resctrl"` |
+| `resctrl.prefix` | Filename/object prefix for resctrl parquet outputs | `"resctrl-occupancy-"` |
