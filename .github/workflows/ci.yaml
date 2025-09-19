@@ -24,6 +24,7 @@ on:
           - perf-short
           - full-short
           - full-long
+          - resctrl-only
 
 permissions:
   contents: read

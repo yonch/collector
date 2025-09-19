@@ -652,7 +652,7 @@ jobs:
 
 
   resctrl-e2e-binary:
-    if: inputs.level == 'full-short' || inputs.level == 'full-long'
+    if: inputs.level == 'full-short' || inputs.level == 'full-long' || inputs.level == "resctrl-only"
     name: Resctrl occupancy E2E (k3s, binary)
     needs: [setup-runner, prepare-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
