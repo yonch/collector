@@ -224,7 +224,7 @@ jobs:
             fi
           done
           # Ensure at least one row exists
-          ROWS=$(pqrs count "${FILE}" | awk '{print $1}')
+          ROWS=$(pqrs rowcount "${FILE}" | awk '{print $1}')
           echo "Rows: $ROWS"
           test "$ROWS" -ge 1
 
