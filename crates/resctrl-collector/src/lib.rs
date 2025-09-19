@@ -458,10 +458,10 @@ pub async fn run(
 
     // Best-effort: close NRI connections
     if let Some(nri) = nri_resctrl {
-        nri.close().await;
+        let _ = nri.close().await;
     }
     if let Some(nri) = nri_meta {
-        nri.close().await;
+        let _ = nri.close().await;
     }
 
     // Close the sender to signal shutdown downstream
