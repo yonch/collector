@@ -534,6 +534,7 @@ dependencies = [
  "timeslot",
  "tokio",
  "tokio-util",
+ "tokio-utils",
  "url",
  "uuid",
  "vmlinux",
@@ -3733,6 +3734,16 @@ dependencies = [
  "pin-project-lite",
  "slab",
  "tokio",
+]
+
+[[package]]
+name = "tokio-utils"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "testing_logger",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

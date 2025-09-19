@@ -357,6 +357,8 @@ pub async fn run(
     ));
     let meta_plugin = Arc::new(MetadataPlugin::new(meta_tx));
 
+    let task_tracker = TaskTracker::new();
+
     // Helper to connect a plugin to NRI (best-effort)
     async fn connect_plugin<P: nri::api_ttrpc::Plugin + Send + Sync + 'static>(
         plugin: Arc<P>,
@@ -400,10 +402,11 @@ pub async fn run(
 
     // Lifecycle join handles (detached through completion handler in caller typically)
     let (mut nri_resctrl_handle, mut nri_meta_handle) = (None, None);
-    if let Some((_nri, jh)) = nri_resctrl {
-        nri_resctrl_handle = Some(jh);
+    if let Some((nri, jh)) = nri_resctrl {
+        nri_resctrl_handle = Some(nri);
+        task_tracker.spawn()
     }
-    if let Some((_nri, jh)) = nri_meta {
+    if let Some((nri, jh)) = nri_meta {
         nri_meta_handle = Some(jh);
     }
 
