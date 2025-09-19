@@ -224,7 +224,7 @@ impl NRIEnrichRecordBatchTask {
                 nri_active = true;
                 nri_opt = Some(nri);
                 let token = shutdown_token.clone();
-                task_tracker.spawn(tokio_utils::join_handle_completion_handler(
+                task_tracker.spawn(tokio_helpers::join_handle_completion_handler(
                     join_handle,
                     token,
                     "NRIPlugin",

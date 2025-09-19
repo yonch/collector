@@ -14,7 +14,7 @@ nri = { workspace = true }
 nri-resctrl-plugin = { workspace = true }
 resctrl = { workspace = true }
 humantime = { workspace = true }
-tokio-utils = { workspace = true }
+tokio-helpers = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "time", "macros", "rt"] }

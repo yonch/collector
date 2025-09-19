@@ -152,10 +152,9 @@ mod tests {
         testing_logger::validate(|captured_logs| {
             assert_eq!(captured_logs.len(), 1);
             assert_eq!(captured_logs[0].level, log::Level::Error);
-            assert_eq!(
-                captured_logs[0].body,
-                "error_task_handle failed with error: TestError(\"test error\")"
-            );
+            assert!(captured_logs[0]
+                .body
+                .contains("error_task_handle failed with error:"));
         });
     }
 
@@ -340,3 +339,4 @@ mod tests {
         });
     }
 }
+

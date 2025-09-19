@@ -378,7 +378,7 @@ pub async fn run(
                     warn!("{} registration failed (continuing without): {}", name, e);
                     Ok(None)
                 } else {
-                    task_tracker.spawn(tokio_utils::join_handle_completion_handler(
+                    task_tracker.spawn(tokio_helpers::join_handle_completion_handler(
                         join_handle,
                         shutdown.clone(),
                         String::from("NRIPlugin-") + name,

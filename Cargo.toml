@@ -16,7 +16,7 @@ members = [
     "crates/resctrl",
     "crates/nri-resctrl-plugin",
     "crates/resctrl-collector",
-    "crates/tokio-utils",
+    "crates/tokio-helpers",
 ]
 
 [workspace.dependencies]
@@ -29,7 +29,7 @@ nri = { path = "crates/nri" }
 resctrl = { path = "crates/resctrl" }
 nri-resctrl-plugin = { path = "crates/nri-resctrl-plugin" }
 resctrl-collector = { path = "crates/resctrl-collector" }
-tokio-utils = { path = "crates/tokio-utils" }
+tokio-helpers = { path = "crates/tokio-helpers" }
 
 libbpf-rs = "0.24.8"
 plain = "0.2"

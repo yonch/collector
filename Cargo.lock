@@ -533,8 +533,8 @@ dependencies = [
  "time",
  "timeslot",
  "tokio",
+ "tokio-helpers",
  "tokio-util",
- "tokio-utils",
  "url",
  "uuid",
  "vmlinux",
@@ -2965,8 +2965,8 @@ dependencies = [
  "nri-resctrl-plugin",
  "resctrl",
  "tokio",
+ "tokio-helpers",
  "tokio-util",
- "tokio-utils",
 ]
 
 [[package]]
@@ -3677,6 +3677,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-helpers"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "testing_logger",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "tokio-macros"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3735,16 +3745,6 @@ dependencies = [
  "pin-project-lite",
  "slab",
  "tokio",
-]
-
-[[package]]
-name = "tokio-utils"
-version = "0.1.0"
-dependencies = [
- "log",
- "testing_logger",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
