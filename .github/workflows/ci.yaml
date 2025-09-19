@@ -24,7 +24,6 @@ on:
           - perf-short
           - full-short
           - full-long
-          - resctrl-only
 
 permissions:
   contents: read
@@ -56,7 +55,7 @@ jobs:
             echo "level=cheap-short" >> $GITHUB_OUTPUT
           else
             # merges to main: run full-long
-            echo "level=full-long" >> $GITHUB_OUTPUT
+            echo "level=cheap-short" >> $GITHUB_OUTPUT
           fi
 
   build-collector:
@@ -107,6 +106,16 @@ jobs:
       level: ${{ needs.context.outputs.level }}
       collector-binary-artifact: collector-binary
       instance-type: ${{ needs.context.outputs.level == 'perf-short' && 'c5.9xlarge' || 'm7i.metal-24xl' }}
+
+  test-collector:
+    if: needs.context.outputs.level == 'cheap-short'
+    needs: [build-collector, context]
+    uses: ./.github/workflows/reusable-test-collector.yaml
+    secrets: inherit
+    with:
+      level: ${{ needs.context.outputs.level }}
+      collector-binary-artifact: collector-binary
+      instance-type: 'm7i.metal-24xl'
 
   test-resctrl:
     if: needs.context.outputs.level == 'full-short' || needs.context.outputs.level == 'full-long'
