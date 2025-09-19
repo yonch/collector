@@ -388,7 +388,7 @@ pub async fn run(
 
     // Attempt connections
     let nri_resctrl = connect_plugin(resctrl_plugin.clone(), "resctrl-plugin", "10").await?;
-    let nri_meta = connect_plugin(meta_plugin.clone(), "metadata-plugin", "10").await?;
+    let nri_meta = connect_plugin(meta_plugin.clone(), "metadata-for-resctrl-plugin", "10").await?;
 
     // Internal state
     let mut state = ResctrlCollectorState::new(this.clone(), batch_sender, &cfg);
