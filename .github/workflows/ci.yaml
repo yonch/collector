@@ -110,7 +110,7 @@ jobs:
   test-resctrl-collector:
     if: needs.context.outputs.level == 'cheap-short'
     needs: [build-collector, context]
-    uses: ./.github/workflows/reusable-test-collector.yaml
+    uses: ./.github/workflows/reusable-test-resctrl-collector.yaml
     secrets: inherit
     with:
       level: ${{ needs.context.outputs.level }}
