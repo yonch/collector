@@ -223,10 +223,10 @@ jobs:
               exit 1
             fi
           done
-          # Ensure at least one row exists
-          ROWS=$(pqrs rowcount "${FILE}" | awk '{print $1}')
-          echo "Rows: $ROWS"
-          test "$ROWS" -ge 1
+          # Ensure at least one row exists using a simple, stable method
+          ROWS=$(pqrs head "${FILE}" | wc -l | tr -d '[:space:]')
+          echo "Rows (first page): ${ROWS}"
+          test "${ROWS}" -ge 1
 
       - name: Show sample rows for the test pod
         run: |
