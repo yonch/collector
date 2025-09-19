@@ -8,25 +8,29 @@ use tokio_util::sync::CancellationToken;
 /// 1. Proper logging of success, errors, and panics
 /// 2. Cancellation token is triggered when task completes for any reason
 /// 3. Graceful handling of all task completion scenarios
-pub async fn task_completion_handler<F, T, E>(future: F, token: CancellationToken, task_name: &str)
+pub async fn task_completion_handler<F, T, E, S>(future: F, token: CancellationToken, task_name: S)
 where
     F: Future<Output = Result<T, E>> + Send + 'static,
     T: Send + 'static,
     E: Send + 'static + std::fmt::Debug,
+    S: Into<String>,
 {
     let handle = tokio::spawn(future);
-    job_handle_completion_handler(handle, token, task_name).await;
+    join_handle_completion_handler(handle, token, task_name).await;
 }
 
 /// Handle completion of an existing JoinHandle<Result<..>> without re-spawning
-pub async fn job_handle_completion_handler<T, E>(
+pub async fn join_handle_completion_handler<T, E, S>(
     handle: JoinHandle<Result<T, E>>,
     token: CancellationToken,
-    task_name: &str,
+    task_name: S,
 ) where
     T: Send + 'static,
     E: Send + 'static + std::fmt::Debug,
+    S: Into<String>,
 {
+    let task_name: String = task_name.into();
+
     match handle.await {
         Ok(Ok(_)) => {
             log::debug!("{} completed successfully", task_name);
@@ -85,7 +89,7 @@ mod tests {
         let handle = tokio::spawn(async { Ok::<(), TestError>(()) });
 
         // Run the join-handle completion handler
-        super::job_handle_completion_handler(handle, token, "test_task_handle").await;
+        super::join_handle_completion_handler(handle, token, "test_task_handle").await;
 
         // Verify token was cancelled
         assert!(token_clone.is_cancelled());
@@ -94,7 +98,10 @@ mod tests {
         testing_logger::validate(|captured_logs| {
             assert_eq!(captured_logs.len(), 1);
             assert_eq!(captured_logs[0].level, log::Level::Debug);
-            assert_eq!(captured_logs[0].body, "test_task_handle completed successfully");
+            assert_eq!(
+                captured_logs[0].body,
+                "test_task_handle completed successfully"
+            );
         });
     }
 
@@ -133,9 +140,10 @@ mod tests {
         let token_clone = token.clone();
 
         // Pre-spawn a task that returns an error
-        let handle = tokio::spawn(async { Err::<(), TestError>(TestError("test error".to_string())) });
+        let handle =
+            tokio::spawn(async { Err::<(), TestError>(TestError("test error".to_string())) });
 
-        super::job_handle_completion_handler(handle, token, "error_task_handle").await;
+        super::join_handle_completion_handler(handle, token, "error_task_handle").await;
 
         // Verify token was cancelled
         assert!(token_clone.is_cancelled());
@@ -196,7 +204,7 @@ mod tests {
             Ok::<(), TestError>(())
         });
 
-        super::job_handle_completion_handler(handle, token, "panic_task_handle").await;
+        super::join_handle_completion_handler(handle, token, "panic_task_handle").await;
 
         // Verify token was cancelled
         assert!(token_clone.is_cancelled());

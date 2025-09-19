@@ -12,6 +12,7 @@ use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use log::{debug, info, warn};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use nri::metadata::{ContainerMetadata, MetadataMessage, MetadataPlugin};
 use nri::NRI;
@@ -364,18 +365,25 @@ pub async fn run(
         plugin: Arc<P>,
         name: &str,
         idx: &str,
-    ) -> Result<Option<(NRI, tokio::task::JoinHandle<Result<()>>)>> {
+        task_tracker: &TaskTracker,
+        shutdown: &CancellationToken,
+    ) -> Result<Option<NRI>> {
         let socket_path = std::env::var("NRI_SOCKET_PATH")
             .unwrap_or_else(|_| "/var/run/nri/nri.sock".to_string());
         match tokio::net::UnixStream::connect(&socket_path).await {
             Ok(stream) => {
                 info!("Connecting {} to NRI at {}", name, socket_path);
-                let (nri, join) = NRI::new(stream, plugin, name, idx).await?;
+                let (nri, join_handle) = NRI::new(stream, plugin, name, idx).await?;
                 if let Err(e) = nri.register().await {
                     warn!("{} registration failed (continuing without): {}", name, e);
                     Ok(None)
                 } else {
-                    Ok(Some((nri, join)))
+                    task_tracker.spawn(tokio_utils::join_handle_completion_handler(
+                        join_handle,
+                        shutdown.clone(),
+                        String::from("NRIPlugin-") + name,
+                    ));
+                    Ok(Some(nri))
                 }
             }
             Err(e) => {
@@ -389,8 +397,24 @@ pub async fn run(
     }
 
     // Attempt connections
-    let nri_resctrl = connect_plugin(resctrl_plugin.clone(), "resctrl-plugin", "10").await?;
-    let nri_meta = connect_plugin(meta_plugin.clone(), "metadata-for-resctrl-plugin", "10").await?;
+    let nri_resctrl = connect_plugin(
+        resctrl_plugin.clone(),
+        "resctrl-plugin",
+        "10",
+        &task_tracker,
+        &shutdown,
+    )
+    .await?;
+    let nri_meta = connect_plugin(
+        meta_plugin.clone(),
+        "metadata-for-resctrl-plugin",
+        "10",
+        &task_tracker,
+        &shutdown,
+    )
+    .await?;
+
+    task_tracker.close();
 
     // Internal state
     let mut state = ResctrlCollectorState::new(this.clone(), batch_sender, &cfg);
@@ -399,16 +423,6 @@ pub async fn run(
     let mut sample_tick = tokio::time::interval(cfg.sample_interval);
     let mut retry_tick = tokio::time::interval(cfg.retry_interval);
     let mut health_tick = tokio::time::interval(cfg.health_interval);
-
-    // Lifecycle join handles (detached through completion handler in caller typically)
-    let (mut nri_resctrl_handle, mut nri_meta_handle) = (None, None);
-    if let Some((nri, jh)) = nri_resctrl {
-        nri_resctrl_handle = Some(nri);
-        task_tracker.spawn()
-    }
-    if let Some((nri, jh)) = nri_meta {
-        nri_meta_handle = Some(jh);
-    }
 
     loop {
         tokio::select! {
@@ -420,7 +434,7 @@ pub async fn run(
                 state.handle_sample_timer();
             }
             // Retry plugin work if connected
-            _ = retry_tick.tick(), if nri_resctrl_handle.is_some() => {
+            _ = retry_tick.tick(), if nri_resctrl.is_some() => {
                 state.handle_retry_timer(&resctrl_plugin);
             }
             // Health logging
@@ -443,12 +457,21 @@ pub async fn run(
     }
 
     // Best-effort: close NRI connections
-    if let Some(jh) = nri_resctrl_handle {
-        jh.abort();
+    if let Some(nri) = nri_resctrl {
+        nri.close().await;
     }
-    if let Some(jh) = nri_meta_handle {
-        jh.abort();
+    if let Some(nri) = nri_meta {
+        nri.close().await;
     }
+
+    // Close the sender to signal shutdown downstream
+    drop(state.batch_sender);
+
+    // Signal the cancellation token
+    shutdown.cancel();
+
+    task_tracker.wait().await;
+
     Ok(())
 }
 

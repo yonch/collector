@@ -33,9 +33,9 @@ use nri_enrich_recordbatch_task::NRIEnrichRecordBatchTask;
 use parquet_writer::{ParquetWriter, ParquetWriterConfig};
 use parquet_writer_task::ParquetWriterTask;
 use perf_event_processor::{PerfEventProcessor, ProcessorMode};
-use tokio_utils::task_completion_handler::task_completion_handler;
 use timeslot_data::TimeslotData;
 use timeslot_to_recordbatch_task::TimeslotToRecordBatchTask;
+use tokio_utils::task_completion_handler;
 
 /// Number of perf ring buffer pages for timeslot mode
 const TIMESLOT_PERF_RING_PAGES: u32 = 32;

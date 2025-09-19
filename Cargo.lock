@@ -2966,6 +2966,7 @@ dependencies = [
  "resctrl",
  "tokio",
  "tokio-util",
+ "tokio-utils",
 ]
 
 [[package]]

@@ -224,13 +224,11 @@ impl NRIEnrichRecordBatchTask {
                 nri_active = true;
                 nri_opt = Some(nri);
                 let token = shutdown_token.clone();
-                task_tracker.spawn(
-                    tokio_utils::task_completion_handler::job_handle_completion_handler(
-                        join_handle,
-                        token,
-                        "NRIPlugin",
-                    ),
-                );
+                task_tracker.spawn(tokio_utils::join_handle_completion_handler(
+                    join_handle,
+                    token,
+                    "NRIPlugin",
+                ));
             }
             Ok(None) => { /* best-effort without NRI */ }
             Err(e) => {
