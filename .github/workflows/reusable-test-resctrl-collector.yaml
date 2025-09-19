@@ -170,6 +170,7 @@ jobs:
           PY
           )
           echo "uuid=$UUID" >> "$GITHUB_OUTPUT"
+          echo "prefix=${OUTPUT_PREFIX}${UUID}-" >> "$GITHUB_OUTPUT"
 
       - name: Deploy CPU-active workload
         run: |
@@ -196,15 +197,15 @@ jobs:
           RUST_LOG: debug
           RESCTRL_SAMPLING_INTERVAL: 250ms
         run: |
-          PREFIX="${OUTPUT_PREFIX}${{ steps.gen.outputs.uuid }}-"
-          echo "Using local prefix: $PREFIX"
+          PREFIX="${{ steps.gen.outputs.prefix }}"
+          echo "Using local prefix: ${{ steps.gen.outputs.prefix }}"
           echo "Running collector for 30 seconds..."
           sudo -E ./collector -d 30 --enable-resctrl --storage-type local --prefix "$PREFIX" --verbose
 
       - name: Verify occupancy parquet
         run: |
           set -euo pipefail
-          PREFIX="${OUTPUT_PREFIX}${{ steps.gen.outputs.uuid }}-"
+          PREFIX="${{ steps.gen.outputs.prefix }}"
           FILE=$(ls ${PREFIX}*.parquet | head -n1 || true)
           if [ -z "${FILE}" ]; then
             echo "No resctrl occupancy parquet files found with prefix: ${PREFIX}"
@@ -229,7 +230,7 @@ jobs:
 
       - name: Show sample rows for the test pod
         run: |
-          PREFIX="${OUTPUT_PREFIX}${{ steps.gen.outputs.uuid }}-"
+          PREFIX="${{ steps.gen.outputs.prefix }}"
           FILE=$(ls ${PREFIX}*.parquet | head -n1)
           echo "Sample rows for pod ${POD_NAME} in ${POD_NAMESPACE}:"
           pqrs cat --json "${FILE}" | jq -c \
@@ -242,5 +243,5 @@ jobs:
         with:
           name: resctrl-e2e-parquet
           path: |
-            ${OUTPUT_PREFIX}${{ steps.gen.outputs.uuid }}-*.parquet
+            ${{ steps.gen.outputs.prefix }}*.parquet
           if-no-files-found: warn
