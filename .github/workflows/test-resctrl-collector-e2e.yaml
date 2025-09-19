@@ -186,7 +186,20 @@ jobs:
           EOF
           helm upgrade --install "$RELEASE_NAME" ./charts/collector -f values-resctrl.yaml
           echo "Waiting for collector pod(s) to be Ready..."
-          kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=collector --timeout=180s
+          if ! kubectl wait --for=condition=Ready pods -l app.kubernetes.io/name=collector --timeout=60s; then
+            echo "Collector pods did not become Ready within timeout. Debug info:"
+            kubectl get pods -l app.kubernetes.io/name=collector -o wide || true
+            POD=$(kubectl get pods -l app.kubernetes.io/name=collector -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "$POD" ]; then
+              echo "\n==== kubectl describe pod/$POD ===="
+              kubectl describe pod "$POD" || true
+              echo "\n==== kubectl logs pod/$POD ===="
+              kubectl logs "$POD" || true
+            else
+              echo "No collector pod found to describe or fetch logs."
+            fi
+            exit 1
+          fi
           kubectl get pods -o wide
 
       - name: Wait for occupancy output
@@ -252,4 +265,3 @@ jobs:
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ needs.setup-runner.outputs.region || secrets.AWS_REGION }}
-
