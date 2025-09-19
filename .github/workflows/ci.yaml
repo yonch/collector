@@ -107,7 +107,7 @@ jobs:
       collector-binary-artifact: collector-binary
       instance-type: ${{ needs.context.outputs.level == 'perf-short' && 'c5.9xlarge' || 'm7i.metal-24xl' }}
 
-  test-collector:
+  test-resctrl-collector:
     if: needs.context.outputs.level == 'cheap-short'
     needs: [build-collector, context]
     uses: ./.github/workflows/reusable-test-collector.yaml
