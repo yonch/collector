@@ -1,0 +1,100 @@
+{"cycles":3349544,"duration":999879,"instructions":8029519,"llc_misses":8368,"pid":23159,"process_name":"helm","start_time":193926000000}
+{"cycles":949311,"duration":305805,"instructions":360706,"llc_misses":4266,"pid":2201,"process_name":"k3s-server","start_time":218825000000}
+{"cycles":3159025,"duration":971410,"instructions":5130859,"llc_misses":19480,"pid":19840,"process_name":"next-server (v1","start_time":250619000000}
+{"cycles":980784,"duration":333067,"instructions":327791,"llc_misses":4513,"pid":18642,"process_name":"cart","start_time":261550000000}
+{"cycles":3402006,"duration":1016599,"instructions":2883959,"llc_misses":4664,"pid":23585,"process_name":"bash","start_time":262509000000}
+{"cycles":155149,"duration":56905,"instructions":63542,"llc_misses":320,"pid":18027,"process_name":"flagd-build","start_time":262757000000}
+{"cycles":2386690,"duration":718556,"instructions":854907,"llc_misses":12812,"pid":20060,"process_name":"next-server (v1","start_time":265924000000}
+{"cycles":6630901,"duration":2029763,"instructions":3124252,"llc_misses":21922,"pid":20008,"process_name":"next-server (v1","start_time":270370000000}
+{"cycles":1421656,"duration":454622,"instructions":685397,"llc_misses":1349,"pid":18642,"process_name":"cart","start_time":271555000000}
+{"cycles":23215,"duration":27567,"instructions":10925,"llc_misses":56,"pid":2201,"process_name":"k3s-server","start_time":272146000000}
+{"cycles":4884815,"duration":1460590,"instructions":3855718,"llc_misses":23640,"pid":19897,"process_name":"next-server (v1","start_time":278365000000}
+{"cycles":1634690,"duration":882002,"instructions":881305,"llc_misses":1170,"pid":18642,"process_name":"cart","start_time":279798000000}
+{"cycles":496167,"duration":150717,"instructions":66132,"llc_misses":6216,"pid":22325,"process_name":"java","start_time":288588000000}
+{"cycles":4701564,"duration":1409876,"instructions":2523286,"llc_misses":15924,"pid":20060,"process_name":"next-server (v1","start_time":294737000000}
+{"cycles":3326590,"duration":1000330,"instructions":6299968,"llc_misses":656,"pid":23974,"process_name":"locust","start_time":297636000000}
+{"cycles":3325308,"duration":995051,"instructions":1408266,"llc_misses":15196,"pid":19897,"process_name":"next-server (v1","start_time":302751000000}
+{"cycles":479673,"duration":145197,"instructions":173623,"llc_misses":2583,"pid":18694,"process_name":"envoy","start_time":304033000000}
+{"cycles":296912,"duration":104215,"instructions":136264,"llc_misses":830,"pid":18722,"process_name":"envoy","start_time":307798000000}
+{"cycles":5123305,"duration":10292680,"instructions":2315401,"llc_misses":5624,"pid":0,"process_name":null,"start_time":311035000000}
+{"cycles":1010055,"duration":300661,"instructions":355271,"llc_misses":3839,"pid":18722,"process_name":"envoy","start_time":323258000000}
+{"cycles":177924,"duration":66224,"instructions":46018,"llc_misses":565,"pid":10923,"process_name":"containerd-shim","start_time":329309000000}
+{"cycles":278081,"duration":94394,"instructions":40768,"llc_misses":3866,"pid":18181,"process_name":"php","start_time":331089000000}
+{"cycles":710006,"duration":225005,"instructions":166119,"llc_misses":1616,"pid":14753,"process_name":"currency","start_time":331963000000}
+{"cycles":206285,"duration":83823,"instructions":57873,"llc_misses":352,"pid":13170,"process_name":"containerd-shim","start_time":333352000000}
+{"cycles":285187,"duration":88489,"instructions":103168,"llc_misses":969,"pid":22328,"process_name":"java","start_time":334240000000}
+{"cycles":3201926,"duration":985401,"instructions":985808,"llc_misses":13450,"pid":19794,"process_name":"next-server (v1","start_time":334475000000}
+{"cycles":3332615,"duration":998967,"instructions":3476076,"llc_misses":518,"pid":23630,"process_name":"locust","start_time":335847000000}
+{"cycles":3339466,"duration":1019519,"instructions":863472,"llc_misses":16841,"pid":20062,"process_name":"next-server (v1","start_time":336040000000}
+{"cycles":3342829,"duration":1001236,"instructions":2712296,"llc_misses":9197,"pid":19491,"process_name":"java","start_time":338301000000}
+{"cycles":1853083,"duration":560014,"instructions":502562,"llc_misses":10407,"pid":19794,"process_name":"next-server (v1","start_time":342448000000}
+{"cycles":3300922,"duration":1000159,"instructions":2868931,"llc_misses":3046,"pid":24282,"process_name":"locust","start_time":344000000000}
+{"cycles":177262,"duration":65776,"instructions":48432,"llc_misses":634,"pid":6726,"process_name":"containerd-shim","start_time":344707000000}
+{"cycles":122024,"duration":49338,"instructions":43071,"llc_misses":175,"pid":6810,"process_name":"containerd-shim","start_time":346685000000}
+{"cycles":77629,"duration":39297,"instructions":31399,"llc_misses":56,"pid":5842,"process_name":"containerd-shim","start_time":346897000000}
+{"cycles":1096603,"duration":326329,"instructions":358365,"llc_misses":4630,"pid":23930,"process_name":"locust","start_time":347449000000}
+{"cycles":3305255,"duration":1067015,"instructions":1054501,"llc_misses":13418,"pid":18130,"process_name":"product-catalog","start_time":350107000000}
+{"cycles":2895618,"duration":879641,"instructions":926425,"llc_misses":6738,"pid":18682,"process_name":"envoy","start_time":351330000000}
+{"cycles":2908215,"duration":875446,"instructions":1231776,"llc_misses":8225,"pid":23844,"process_name":"locust","start_time":352567000000}
+{"cycles":2402327,"duration":721830,"instructions":824662,"llc_misses":11395,"pid":19829,"process_name":"next-server (v1","start_time":355016000000}
+{"cycles":3005153,"duration":930059,"instructions":974496,"llc_misses":31383,"pid":15546,"process_name":"shipping","start_time":359605000000}
+{"cycles":2730600,"duration":836064,"instructions":616625,"llc_misses":20856,"pid":14753,"process_name":"currency","start_time":359890000000}
+{"cycles":143007,"duration":56523,"instructions":43421,"llc_misses":323,"pid":8215,"process_name":"containerd-shim","start_time":361271000000}
+{"cycles":3153939,"duration":965907,"instructions":1784277,"llc_misses":17812,"pid":19980,"process_name":"next-server (v1","start_time":361324000000}
+{"cycles":1398581,"duration":437289,"instructions":363837,"llc_misses":8887,"pid":15546,"process_name":"shipping","start_time":362227000000}
+{"cycles":1262177,"duration":385084,"instructions":296558,"llc_misses":3509,"pid":18682,"process_name":"envoy","start_time":363798000000}
+{"cycles":3355223,"duration":1002623,"instructions":6000198,"llc_misses":970,"pid":23630,"process_name":"locust","start_time":366049000000}
+{"cycles":1910937,"duration":601296,"instructions":475759,"llc_misses":5954,"pid":18030,"process_name":"ruby","start_time":371046000000}
+{"cycles":5980000,"duration":22587038,"instructions":2888544,"llc_misses":10239,"pid":0,"process_name":null,"start_time":373126000000}
+{"cycles":833849,"duration":267124,"instructions":167854,"llc_misses":7860,"pid":15454,"process_name":"shipping","start_time":373366000000}
+{"cycles":1090070,"duration":371900,"instructions":533978,"llc_misses":3008,"pid":18079,"process_name":"product-catalog","start_time":375775000000}
+{"cycles":3350914,"duration":1004263,"instructions":1809017,"llc_misses":17457,"pid":20042,"process_name":"next-server (v1","start_time":375782000000}
+{"cycles":3345568,"duration":1000111,"instructions":5356392,"llc_misses":806,"pid":24062,"process_name":"locust","start_time":376238000000}
+{"cycles":206258,"duration":76951,"instructions":55482,"llc_misses":515,"pid":10923,"process_name":"containerd-shim","start_time":379259000000}
+{"cycles":2005448,"duration":645937,"instructions":765859,"llc_misses":7085,"pid":21822,"process_name":"checkout","start_time":379574000000}
+{"cycles":233739,"duration":73613,"instructions":72731,"llc_misses":605,"pid":18111,"process_name":"ruby","start_time":382082000000}
+{"cycles":507977,"duration":154503,"instructions":151556,"llc_misses":1096,"pid":24238,"process_name":"locust","start_time":385779000000}
+{"cycles":3312238,"duration":1002616,"instructions":2916808,"llc_misses":2402,"pid":24238,"process_name":"locust","start_time":386532000000}
+{"cycles":1740401,"duration":519287,"instructions":575441,"llc_misses":5364,"pid":18682,"process_name":"envoy","start_time":388129000000}
+{"cycles":2241776,"duration":739228,"instructions":640205,"llc_misses":4097,"pid":14113,"process_name":"currency","start_time":389263000000}
+{"cycles":491898,"duration":187120,"instructions":177288,"llc_misses":852,"pid":6475,"process_name":"containerd-shim","start_time":389582000000}
+{"cycles":33959,"duration":18865,"instructions":10372,"llc_misses":52,"pid":18682,"process_name":"envoy","start_time":394794000000}
+{"cycles":94336,"duration":44330,"instructions":17366,"llc_misses":320,"pid":6475,"process_name":"containerd-shim","start_time":395449000000}
+{"cycles":210252,"duration":68164,"instructions":88640,"llc_misses":1051,"pid":18740,"process_name":"envoy","start_time":404639000000}
+{"cycles":1103148,"duration":341993,"instructions":266155,"llc_misses":2910,"pid":18740,"process_name":"envoy","start_time":405757000000}
+{"cycles":743197,"duration":254121,"instructions":164957,"llc_misses":2152,"pid":18756,"process_name":"envoy","start_time":411945000000}
+{"cycles":2785242,"duration":1138958,"instructions":907262,"llc_misses":9240,"pid":18642,"process_name":"cart","start_time":414603000000}
+{"cycles":2563847,"duration":799116,"instructions":848803,"llc_misses":8220,"pid":18682,"process_name":"envoy","start_time":414831000000}
+{"cycles":176645,"duration":73031,"instructions":69596,"llc_misses":371,"pid":18048,"process_name":"otelcol-contrib","start_time":415986000000}
+{"cycles":538960,"duration":162798,"instructions":114267,"llc_misses":2922,"pid":19794,"process_name":"next-server (v1","start_time":417855000000}
+{"cycles":1178301,"duration":401286,"instructions":496207,"llc_misses":3896,"pid":2244,"process_name":"containerd","start_time":420067000000}
+{"cycles":1728025,"duration":543568,"instructions":745761,"llc_misses":3828,"pid":18553,"process_name":"cart","start_time":423665000000}
+{"cycles":2012277,"duration":705418,"instructions":492109,"llc_misses":11702,"pid":19979,"process_name":"next-server (v1","start_time":427429000000}
+{"cycles":51367,"duration":106579,"instructions":10744,"llc_misses":116,"pid":10767,"process_name":"containerd-shim","start_time":431479000000}
+{"cycles":1201448,"duration":474723,"instructions":345761,"llc_misses":5570,"pid":15454,"process_name":"shipping","start_time":432912000000}
+{"cycles":1514013,"duration":573077,"instructions":514976,"llc_misses":3860,"pid":24150,"process_name":"locust","start_time":436684000000}
+{"cycles":3111870,"duration":1002559,"instructions":2145096,"llc_misses":16224,"pid":20042,"process_name":"next-server (v1","start_time":437025000000}
+{"cycles":2977098,"duration":995065,"instructions":864317,"llc_misses":14334,"pid":20042,"process_name":"next-server (v1","start_time":443510000000}
+{"cycles":3078384,"duration":995547,"instructions":885975,"llc_misses":17016,"pid":19897,"process_name":"next-server (v1","start_time":444478000000}
+{"cycles":2896540,"duration":1000941,"instructions":881541,"llc_misses":15646,"pid":19840,"process_name":"next-server (v1","start_time":448028000000}
+{"cycles":7558496,"duration":2517504,"instructions":3345407,"llc_misses":11805,"pid":18553,"process_name":"cart","start_time":449832000000}
+{"cycles":3118444,"duration":1014969,"instructions":4078484,"llc_misses":1975,"pid":23800,"process_name":"locust","start_time":454751000000}
+{"cycles":1979338,"duration":612930,"instructions":670668,"llc_misses":5937,"pid":24062,"process_name":"locust","start_time":458135000000}
+{"cycles":1685063,"duration":605703,"instructions":415101,"llc_misses":12839,"pid":15546,"process_name":"shipping","start_time":460618000000}
+{"cycles":2246833,"duration":664460,"instructions":625252,"llc_misses":11877,"pid":20062,"process_name":"next-server (v1","start_time":461093000000}
+{"cycles":2959613,"duration":999814,"instructions":812917,"llc_misses":14397,"pid":20034,"process_name":"next-server (v1","start_time":461602000000}
+{"cycles":4966794,"duration":1911728,"instructions":1879797,"llc_misses":14407,"pid":18553,"process_name":"cart","start_time":462709000000}
+{"cycles":1080363,"duration":467234,"instructions":332373,"llc_misses":4029,"pid":23754,"process_name":"locust","start_time":464570000000}
+{"cycles":1544876,"duration":528414,"instructions":591731,"llc_misses":3643,"pid":21831,"process_name":"checkout","start_time":467019000000}
+{"cycles":1714163,"duration":741418,"instructions":649640,"llc_misses":8168,"pid":21831,"process_name":"checkout","start_time":471858000000}
+{"cycles":3019798,"duration":1003783,"instructions":1759988,"llc_misses":17447,"pid":20012,"process_name":"next-server (v1","start_time":472085000000}
+{"cycles":1586204,"duration":485830,"instructions":478761,"llc_misses":4821,"pid":18722,"process_name":"envoy","start_time":478479000000}
+{"cycles":3258875,"duration":1004398,"instructions":1761679,"llc_misses":10552,"pid":19840,"process_name":"next-server (v1","start_time":478598000000}
+{"cycles":204090,"duration":74806,"instructions":64200,"llc_misses":904,"pid":14228,"process_name":"valkey-server","start_time":480121000000}
+{"cycles":5065601,"duration":1561447,"instructions":2928478,"llc_misses":24741,"pid":20062,"process_name":"next-server (v1","start_time":488666000000}
+{"cycles":3260095,"duration":1005501,"instructions":1902721,"llc_misses":12710,"pid":19897,"process_name":"next-server (v1","start_time":489026000000}
+{"cycles":217476,"duration":81213,"instructions":48877,"llc_misses":718,"pid":18682,"process_name":"envoy","start_time":495775000000}
+{"cycles":1048359,"duration":312293,"instructions":340147,"llc_misses":3455,"pid":23800,"process_name":"locust","start_time":497622000000}
+{"cycles":1066660,"duration":348370,"instructions":225758,"llc_misses":7970,"pid":15546,"process_name":"shipping","start_time":498920000000}
+{"cycles":1138878,"duration":349646,"instructions":287237,"llc_misses":7686,"pid":21831,"process_name":"checkout","start_time":499288000000}
+{"cycles":303144,"duration":106272,"instructions":146634,"llc_misses":451,"pid":6726,"process_name":"containerd-shim","start_time":500493000000}
