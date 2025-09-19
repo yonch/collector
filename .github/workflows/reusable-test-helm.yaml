@@ -1,38 +1,57 @@
-name: test-helm-chart
-on: 
-  workflow_dispatch:  # Manual trigger for testing
+name: reusable-test-helm
+
+on:
+  workflow_call:
     inputs:
       instance-type:
-        description: 'EC2 instance type to use'
+        description: EC2 instance type
         required: false
-        default: 'm7i.xlarge'
+        default: m7i.xlarge
         type: string
-      image-repository:
-        description: 'Custom image repository (e.g., ghcr.io/username/repo/collector)'
+      collector-image-artifact:
+        description: Name of collector image artifact to use
+        required: false
+        default: collector-image
+        type: string
+      nri-init-image-artifact:
+        description: Name of nri-init image artifact to use
+        required: false
+        default: nri-init-image
+        type: string
+      collector-image-repo:
+        description: Collector image repository (e.g., local/collector)
+        required: false
+        default: local/collector
+        type: string
+      collector-image-tag:
+        description: Collector image tag
+        required: true
+        type: string
+      nri-init-image-repo:
+        description: NRI init image repository (e.g., local/nri-init)
+        required: false
+        default: local/nri-init
+        type: string
+      nri-init-tag:
+        description: NRI init image tag
+        required: true
+        type: string
+      s3-bucket:
+        description: S3 bucket to validate outputs
+        required: false
+        default: unvariance-collector-test-irsa
+        type: string
+      region:
+        description: AWS region
         required: false
         type: string
-      image-tag:
-        description: 'Custom image tag'
+    secrets:
+      AWS_ROLE_ARN:
         required: false
-        default: 'latest'
-        type: string
-  pull_request:
-    paths:
-      - 'charts/collector/**'
-      - '.github/actions/setup-k3s/**'
-      - '.github/workflows/test-helm-chart.yaml'
-  push:
-    branches:
-      - main
-    paths:
-      - 'charts/collector/**'
-      - '.github/actions/setup-k3s/**'
-      - '.github/workflows/test-helm-chart.yaml'
-
-permissions:
-  id-token: write # Required for requesting the JWT
-  contents: read
-  actions: write
+      REPO_ADMIN_TOKEN:
+        required: false
+      AWS_REGION:
+        required: false
 
 jobs:
   setup-runner:
@@ -45,7 +64,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
       - name: Start AWS Runner
         id: start-runner
         uses: ./.github/actions/aws-runner
@@ -53,9 +71,8 @@ jobs:
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
           iam-role-name: github-actions-runner
-          instance-type: ${{ inputs.instance-type || 'm7i.xlarge' }}
-          image-type: 'ubuntu-24.04'
-          volume-size: '40'
+          instance-type: ${{ inputs.instance-type }}
+          image-type: ubuntu-24.04
 
   k3s-deployment:
     needs: [setup-runner]
@@ -89,33 +106,15 @@ jobs:
         run: | 
           kubectl get all -n kube-system
 
-  install-prerequisites:
-    needs: [setup-runner]
-    runs-on: ${{ needs.setup-runner.outputs.runner-label }}
-    timeout-minutes: 5
-    env:
-      HOME: /root
-    steps:
-      - name: Create HOME directory
-        run: |
-          mkdir -p $HOME
-
       - name: Install Helm
         run: |
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
       - name: Install awscli
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          python3 -m zipfile -e awscliv2.zip .
-          chmod u+x ./aws/install
-          sudo ./aws/install
-          echo ls: `ls -l /usr/local/bin/aws` || true
-          chmod +x /usr/local/bin/aws || true
-          echo version: `/usr/local/bin/aws --version` || true
+        uses: ./.github/actions/setup-awscli
 
   helm-chart-deployment:
-    needs: [setup-runner, k3s-deployment, install-prerequisites]
+    needs: [setup-runner, k3s-deployment]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 15
     strategy:
@@ -127,14 +126,36 @@ jobs:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       HOME: /root
-      # Default to current repo's GHCR path (owner/repo/collector)
-      IMAGE_REPOSITORY: ${{ inputs.image-repository || format('ghcr.io/{0}/collector', github.repository) }}
-      IMAGE_TAG: ${{ inputs.image-tag || 'latest' }}
-      NRI_INIT_REPOSITORY: ${{ format('ghcr.io/{0}/nri-init', github.repository) }}
+      # Use provided image repos/tags (defaults are local/*)
+      IMAGE_REPOSITORY: ${{ inputs.collector-image-repo }}
+      IMAGE_TAG: ${{ inputs.collector-image-tag || 'latest' }}
+      NRI_INIT_REPOSITORY: ${{ inputs.nri-init-image-repo }}
+      NRI_INIT_TAG: ${{ inputs.nri-init-tag || 'latest' }}
       TRACE_MODE: ${{ matrix.trace-mode }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Download collector image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.collector-image-artifact }}
+          path: collector-image
+
+      - name: Download nri-init image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.nri-init-image-artifact }}
+          path: nri-init-image
+
+      - name: Import images into k3s containerd
+        run: |
+          set -euxo pipefail
+          # Import docker image tars into k3s' containerd
+          k3s ctr images import collector-image/image.tar
+          k3s ctr images import nri-init-image/image.tar
+          # Show images
+          k3s ctr -n k8s.io images ls | sed -n '1,200p'
 
       - name: Generate UUID Prefix
         id: generate-uuid
@@ -170,7 +191,7 @@ jobs:
             init:
               image:
                 repository: "${NRI_INIT_REPOSITORY}"
-                tag: "latest"
+                tag: "${NRI_INIT_TAG}"
           EOF
           
           # Print the values being used
@@ -181,10 +202,24 @@ jobs:
 
       - name: Wait for Collector Pods to be Ready
         run: |
+          # Allow the wait to fail so we can dump diagnostics
+          set +e
           kubectl wait --for=condition=Ready pods --timeout=60s -l app.kubernetes.io/name=collector
-          if [ $? -ne 0 ]; then
-            echo "Collector pods are not ready after timeout"
-            kubectl describe pods -l app.kubernetes.io/name=collector
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            echo "Collector pods are not ready after timeout. Dumping diagnostics..."
+            echo "\n==> kubectl get pods (all)"
+            kubectl get pods -o wide || true
+            echo "\n==> kubectl describe pods (collector-labeled)"
+            kubectl describe pods -l app.kubernetes.io/name=collector || true
+            echo "\n==> kubectl get events (sorted)"
+            kubectl get events --sort-by=.lastTimestamp || true
+            echo "\n==> kubectl logs for collector pods (all containers)"
+            for p in $(kubectl get pods -l app.kubernetes.io/name=collector -o jsonpath='{.items[*].metadata.name}'); do
+              echo "\n---- Logs for pod: $p ----"
+              kubectl logs "$p" --all-containers=true --tail=-1 || true
+            done
             exit 1
           fi
 
@@ -352,13 +387,12 @@ jobs:
 
   stop-runner:
     name: Stop EC2 runner
-    needs: [setup-runner, k3s-deployment, install-prerequisites, helm-chart-deployment]
+    needs: [setup-runner, k3s-deployment, helm-chart-deployment]
     runs-on: ubuntu-latest
     if: always()  # Run even if previous jobs fail
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        
       - name: Stop AWS Runner
         uses: ./.github/actions/aws-runner/cleanup
         with:
@@ -366,4 +400,4 @@ jobs:
           ec2-instance-id: ${{ needs.setup-runner.outputs.ec2-instance-id }}
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ needs.setup-runner.outputs.region || secrets.AWS_REGION }} 
+          aws-region: ${{ needs.setup-runner.outputs.region }}

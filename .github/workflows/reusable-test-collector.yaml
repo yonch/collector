@@ -1,61 +1,43 @@
-name: test-ebpf-collector
-on: 
-  workflow_dispatch:  # Manual trigger for testing
-    inputs:
-      instance-type:
-        description: 'EC2 instance type to use'
-        required: false
-        default: 'c7i.metal-24xl'
-        type: string
-  pull_request:
-    paths:
-      - crates/**
-      - Cargo.toml
-      - '.github/actions/setup-k3s/**'
-      - .github/workflows/test-ebpf-collector.yaml
-      - '!crates/nri-init/**'
-      - '!crates/nri-resctrl-plugin/**'
-      - '!crates/resctrl/**'
-      - '!crates/trace-analysis/**'
-  push:
-    branches:
-      - main
-    paths:
-      - crates/**
-      - Cargo.toml
-      - '.github/actions/setup-k3s/**'
-      - .github/workflows/test-ebpf-collector.yaml
-      - '!crates/nri-init/**'
-      - '!crates/nri-resctrl-plugin/**'
-      - '!crates/resctrl/**'
-      - '!crates/trace-analysis/**'
+name: reusable-test-collector
 
-permissions:
-  id-token: write # Required for requesting the JWT
-  actions: write # To cancel the workflow if getting the AWS instance fails
+on:
+  workflow_call:
+    inputs:
+      level:
+        description: Test level (cheap-short|perf-short|full-short|full-long)
+        required: true
+        type: string
+      collector-binary-artifact:
+        description: Name of the collector binary artifact to consume
+        required: false
+        default: collector-binary
+        type: string
+      instance-type:
+        description: EC2 instance type for heavy tests
+        required: false
+        default: m7i.metal-24xl
+        type: string
+    secrets:
+      AWS_ROLE_ARN:
+        required: false
+      REPO_ADMIN_TOKEN:
+        required: false
+      AWS_REGION:
+        required: false
+      S3_ACCESS_KEY_ID:
+        required: false
+      S3_SECRET_ACCESS_KEY:
+        required: false
 
 jobs:
-  build-collector:
-    name: Build collector image and binary (reusable)
-    uses: ./.github/workflows/build-component-artifacts.yaml
-    permissions:
-      contents: read
-      packages: read
-    with:
-      runner: ubuntu-latest
-      component: collector
-      push: false
-      upload-image-artifact: true
-      upload-binary-artifact: true
-
   bpf-cgroup-inode-test:
-    name: BPF cgroup inode assumptions
+    name: BPF cgroup inode assumptions (GH-hosted)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Install dependencies
         uses: awalsh128/cache-apt-pkgs-action@v1
@@ -69,7 +51,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cargo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -85,15 +67,13 @@ jobs:
           echo "This is critical for container identification in the collector"
           
           TEST_BIN=$(find target/debug -name "cgroup_inode_test-*" -type f -executable | head -1)
-          if [ -z "$TEST_BIN" ]; then
-            echo "Error: Could not find test binary."
-            exit 1
-          fi
-          sudo $TEST_BIN
+          if [ -z "$TEST_BIN" ]; then echo "Missing test bin"; exit 1; fi
+          # Run ignored tests since this one requires BPF privileges
+          sudo "$TEST_BIN" --ignored
 
   test-multi-kernel:
     name: Test on Multiple Kernels
-    needs: [build-collector, setup-runner, prepare-runner]
+    needs: [setup-runner, prepare-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     strategy:
       fail-fast: false
@@ -130,7 +110,7 @@ jobs:
       - name: Download collector binary
         uses: actions/download-artifact@v4
         with:
-          name: collector-binary
+          name: ${{ inputs.collector-binary-artifact }}
           path: ./artifacts
         
       - name: Copy pqrs to workspace for guest access
@@ -315,6 +295,7 @@ jobs:
           retention-days: 5
 
   setup-runner:
+    if: inputs.level != 'cheap-short'
     name: Start EC2 runner
     runs-on: ubuntu-latest
     outputs:
@@ -324,9 +305,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-        
       - name: Start AWS Runner
         id: start-runner
         uses: ./.github/actions/aws-runner
@@ -334,8 +312,8 @@ jobs:
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
           iam-role-name: github-actions-runner
-          instance-type: ${{ inputs.instance-type || 'c7i.metal-24xl' }}
-          image-type: 'ubuntu-24.04'
+          instance-type: ${{ inputs.instance-type }}
+          image-type: ubuntu-24.04
           volume-size: '40'
 
   cancel-on-failure:
@@ -347,14 +325,16 @@ jobs:
         uses: andymckay/cancel-action@a955d435292c0d409d104b57d8e78435a93a6ef1
 
   test-ebpf:
-    needs: [build-collector, setup-runner, prepare-runner]
+    if: inputs.level != 'cheap-short'
+    name: Collector local run (parquet verification)
+    needs: [setup-runner, prepare-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 10
     steps:
       - name: Download collector binary
         uses: actions/download-artifact@v4
         with:
-          name: collector-binary
+          name: ${{ inputs.collector-binary-artifact }}
           path: ./
 
       - name: Make collector executable
@@ -386,15 +366,16 @@ jobs:
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 5
     steps:
+      - name: Checkout .github folder
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            .github
+          sparse-checkout-cone: true
+
       - name: Install awscli
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          python3 -m zipfile -e awscliv2.zip .
-          chmod u+x ./aws/install
-          sudo ./aws/install
-          echo ls: `ls -l /usr/local/bin/aws` || true
-          chmod +x /usr/local/bin/aws || true
-          echo version: `/usr/local/bin/aws --version` || true
+        uses: ./.github/actions/setup-awscli
 
       - name: Install pqrs
         run: |
@@ -421,8 +402,10 @@ jobs:
           sudo systemctl status podman.socket
       
 
-  test-s3-integration:
-    needs: [setup-runner, prepare-runner, build-collector]
+  test-ebpf-s3:
+    if: inputs.level != 'cheap-short'
+    name: Collector run + S3 validation
+    needs: [setup-runner, prepare-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 15
     env:
@@ -431,12 +414,10 @@ jobs:
       KEY_AUTH_BUCKET: "unvariance-collector-test-key-auth"
       AWSCLI: "/usr/local/bin/aws"
     steps:
-
-
       - name: Download collector binary
         uses: actions/download-artifact@v4
         with:
-          name: collector-binary
+          name: ${{ inputs.collector-binary-artifact }}
           path: ./
 
       - name: Make collector executable
@@ -522,17 +503,14 @@ jobs:
             /tmp/key-auth-test.parquet
           if-no-files-found: error
 
-  cleanup-runner:
+  stop-runner:
     name: Stop EC2 runner
-    needs: [setup-runner, test-ebpf, test-s3-integration, test-multi-kernel]
+    needs: [setup-runner, test-ebpf, test-ebpf-s3, test-multi-kernel, nri-enrichment-e2e]
     runs-on: ubuntu-latest
     if: always()  # Run even if previous jobs fail
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-        
       - name: Stop AWS Runner
         uses: ./.github/actions/aws-runner/cleanup
         with:
@@ -540,30 +518,28 @@ jobs:
           ec2-instance-id: ${{ needs.setup-runner.outputs.ec2-instance-id }}
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ needs.setup-runner.outputs.region || secrets.AWS_REGION }} 
+          aws-region: ${{ needs.setup-runner.outputs.region }}
+
 
   nri-enrichment-e2e:
-    name: NRI Enrichment E2E (Binary)
-    needs: [setup-runner, prepare-runner, build-collector]
+    if: inputs.level == 'full-short' || inputs.level == 'full-long'
+    name: NRI enrichment E2E (k3s)
+    needs: [setup-runner, prepare-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 20
     env:
       POD_NAME: nri-enrichment-test
       POD_NAMESPACE: default
-      EXPECTED_COMM: yes
       OUTPUT_PREFIX: /tmp/nri-e2e-
       NRI_SOCKET_PATH: /var/run/nri/nri.sock
-      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Download collector binary
         uses: actions/download-artifact@v4
         with:
-          name: collector-binary
+          name: ${{ inputs.collector-binary-artifact }}
           path: ./
 
       - name: Make collector executable
@@ -579,21 +555,7 @@ jobs:
           timeout_node_ready_seconds: 300
 
       - name: Ensure NRI socket exists
-        run: |
-          for i in {1..30}; do
-            if [ -S "/var/run/nri/nri.sock" ]; then
-              echo "✅ NRI socket present at /var/run/nri/nri.sock"
-              ls -la /var/run/nri/nri.sock
-              break
-            else
-              echo "Waiting for NRI socket... ($i/30)"
-              sleep 2
-            fi
-          done
-          if [ ! -S "/var/run/nri/nri.sock" ]; then
-            echo "❌ NRI socket missing; K3s/containerd may not have NRI enabled"
-            exit 1
-          fi
+        uses: ./.github/actions/nri-socket-exists
 
       - name: Install jq
         uses: awalsh128/cache-apt-pkgs-action@v1

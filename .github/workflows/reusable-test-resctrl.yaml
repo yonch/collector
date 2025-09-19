@@ -1,43 +1,25 @@
-name: test-resctrl
+name: reusable-test-resctrl
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
+      level:
+        description: Test level (cheap-short|perf-short|full-short|full-long)
+        required: true
+        type: string
       instance-type:
-        description: 'EC2 instance type to use'
+        description: EC2 instance type for resctrl-capable host
         required: false
-        default: 'm7i.metal-24xl'
+        default: m7i.metal-24xl
         type: string
-      image-type:
-        description: 'Runner AMI image type'
+    secrets:
+      AWS_ROLE_ARN:
         required: false
-        default: 'ubuntu-24.04'
-        type: string
-  pull_request:
-    paths:
-      - 'crates/resctrl/**'
-      - 'crates/nri-resctrl-plugin/**'
-      - '.github/actions/setup-k3s/**'
-      - '.github/workflows/test-resctrl.yaml'
-      - 'Cargo.toml'
-  push:
-    branches:
-      - 'main'
-    paths:
-      - 'crates/resctrl/**'
-      - 'crates/nri-resctrl-plugin/**'
-      - '.github/actions/setup-k3s/**'
-      - '.github/workflows/test-resctrl.yaml'
-      - 'Cargo.toml'
-
-permissions:
-  id-token: write
-  contents: read
-  actions: write
+      REPO_ADMIN_TOKEN:
+        required: false
 
 jobs:
-  build-and-unit-test:
-    name: Build + unit tests (GH hosted)
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -69,21 +51,9 @@ jobs:
           rustc -V
           cargo -V
 
-      - name: Run unit tests (resctrl)
+      - name: Build smoke test binary (no-run)
         run: |
           source $HOME/.cargo/env
-          # RESCTRL_E2E not set, so smoke test is skipped
-          RUST_TEST_THREADS=1 cargo test -p resctrl --release -- --nocapture --test-threads=1
-
-      - name: Run unit tests (nri-resctrl-plugin)
-        run: |
-          source $HOME/.cargo/env
-          RUST_TEST_THREADS=1 cargo test -p nri-resctrl-plugin --release -- --nocapture --test-threads=1
-
-      - name: Build test binaries (no-run)
-        run: |
-          source $HOME/.cargo/env
-          # Build only the hardware smoke integration test binary
           cargo test -p resctrl --test smoke_test --release --no-run
 
       - name: Build nri-resctrl-plugin integration tests (no-run)
@@ -94,16 +64,10 @@ jobs:
 
 
       - name: Collect smoke test binary
-        id: collect-bin
         run: |
           set -euxo pipefail
           BIN=$(find target/release/deps -maxdepth 1 -type f -executable -name 'smoke_test-*' | head -n 1)
-          if [ -z "$BIN" ]; then
-            echo "Smoke test binary not found" >&2
-            exit 1
-          fi
-          file "$BIN" || true
-          ldd "$BIN" || true
+          test -n "$BIN" || { echo "smoke test bin not found"; exit 1; }
           cp "$BIN" resctrl-smoke
           chmod +x resctrl-smoke
 
@@ -119,13 +83,7 @@ jobs:
         run: |
           set -euxo pipefail
           P_BIN=$(find target/release/deps -maxdepth 1 -type f -executable -name 'integration_test-*' | head -n 1)
-          if [ -z "$P_BIN" ]; then
-            echo "nri-resctrl-plugin integration test binary not found" >&2
-            find target/release -maxdepth 2 -type f -name '*integration_test*' || true
-            exit 1
-          fi
-          file "$P_BIN" || true
-          ldd "$P_BIN" || true
+          test -n "$P_BIN" || { echo "nri-resctrl-plugin integration test binary not found"; exit 1; }
           cp "$P_BIN" nri-resctrl-plugin-e2e
           chmod +x nri-resctrl-plugin-e2e
 
@@ -138,7 +96,7 @@ jobs:
 
   nri-resctrl-plugin-e2e:
     name: NRI resctrl plugin full flow (k3s on EC2)
-    needs: [setup-runner, build-and-unit-test]
+    needs: [setup-runner, build]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 20
     steps:
@@ -156,23 +114,7 @@ jobs:
           timeout_node_ready_seconds: 300
 
       - name: Verify NRI socket
-        run: |
-          set -euo pipefail
-          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-          echo "=== Waiting for NRI socket at /var/run/nri/nri.sock ==="
-          for i in $(seq 1 90); do
-            if sudo test -S /var/run/nri/nri.sock; then
-              echo "✓ NRI socket present"
-              sudo ls -la /var/run/nri/nri.sock
-              break
-            fi
-            sleep 1
-          done
-          if ! sudo test -S /var/run/nri/nri.sock; then
-            echo "✗ NRI socket not found after enabling on k3s"
-            sudo journalctl -u k3s --no-pager -n 200 || true
-            exit 1
-          fi
+        uses: ./.github/actions/nri-socket-exists
 
       - name: Download nri-resctrl-plugin e2e binary
         uses: actions/download-artifact@v4
@@ -208,8 +150,9 @@ jobs:
 
 
   setup-runner:
+    if: inputs.level == 'full-short' || inputs.level == 'full-long'
     name: Start EC2 runner (resctrl-capable)
-    needs: [build-and-unit-test]
+    needs: [build]
     runs-on: ubuntu-latest
     outputs:
       runner-label: ${{ steps.start-runner.outputs.runner-label }}
@@ -218,7 +161,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Start AWS Runner
         id: start-runner
         uses: ./.github/actions/aws-runner
@@ -226,13 +168,14 @@ jobs:
           github-token: ${{ secrets.REPO_ADMIN_TOKEN }}
           aws-role-arn: ${{ secrets.AWS_ROLE_ARN }}
           iam-role-name: github-actions-runner
-          instance-type: ${{ inputs.instance-type || 'm7i.metal-24xl' }}
-          image-type: ${{ inputs.image-type || 'ubuntu-24.04' }}
-          market-type: 'spot'
+          instance-type: ${{ inputs.instance-type }}
+          image-type: ubuntu-24.04
+          market-type: spot
 
   resctrl-e2e-smoke:
+    if: inputs.level == 'full-short' || inputs.level == 'full-long'
     name: Run resctrl smoke test
-    needs: [build-and-unit-test, setup-runner]
+    needs: [build, setup-runner]
     runs-on: ${{ needs.setup-runner.outputs.runner-label }}
     timeout-minutes: 20
     env:
@@ -240,31 +183,27 @@ jobs:
     steps:
       - name: Prepare HOME
         run: mkdir -p "$HOME"
-
       - name: Download smoke binary
         uses: actions/download-artifact@v4
         with:
           name: resctrl-smoke-bin
           path: ./
-
       - name: Run resctrl smoke test (hardware)
         shell: bash
         run: |
           set -euxo pipefail
           BIN=./resctrl-smoke
           chmod +x "$BIN" || true
-          echo "Executing $BIN"
           RESCTRL_E2E=1 "$BIN" --nocapture --test-threads=1
 
   stop-runner:
+    if: always() && (inputs.level == 'full-short' || inputs.level == 'full-long')
     name: Stop EC2 runner
     needs: [setup-runner, resctrl-e2e-smoke, nri-resctrl-plugin-e2e]
     runs-on: ubuntu-latest
-    if: always()
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Stop AWS Runner
         uses: ./.github/actions/aws-runner/cleanup
         with:

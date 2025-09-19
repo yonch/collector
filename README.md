@@ -1,5 +1,4 @@
-[![Collector](https://github.com/unvariance/collector/actions/workflows/test-ebpf-collector.yaml/badge.svg)](https://github.com/unvariance/collector/actions/workflows/test-ebpf-collector.yaml)
-[![Helm Chart](https://github.com/unvariance/collector/actions/workflows/test-helm-chart.yaml/badge.svg)](https://github.com/unvariance/collector/actions/workflows/test-helm-chart.yaml)
+[![Tests](https://github.com/unvariance/collector/actions/workflows/ci.yaml/badge.svg)](https://github.com/unvariance/collector/actions/workflows/ci.yaml)
 [![Benchmark](https://github.com/unvariance/collector/actions/workflows/benchmark.yaml/badge.svg)](https://github.com/unvariance/collector/actions/workflows/benchmark.yaml)
 
 
@@ -90,7 +89,7 @@ For complete configuration options, see the [Helm chart documentation](charts/co
 
 ### Manual Installation
 
-See the [GitHub Actions workflow](.github/workflows/test-ebpf-collector.yaml) for detailed build steps.
+See the [multi-arch build workflow](.github/workflows/build-collector.yaml) for detailed image build steps.
 
 
 
