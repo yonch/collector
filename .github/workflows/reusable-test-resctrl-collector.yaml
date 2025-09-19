@@ -146,7 +146,7 @@ jobs:
           kubeconfig_path: /etc/rancher/k3s/k3s.yaml
           preflight_inotify: true
           disable_packaged_addons: true
-          wait_kube_system: true
+          wait_kube_system: false
           timeout_api_server_ready_seconds: 300
           timeout_node_ready_seconds: 300
           timeout_kube_system_each_seconds: 10
