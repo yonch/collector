@@ -114,6 +114,7 @@ spec:
             {{- end }}
             {{- if .Values.resctrl.enabled }}
             - --enable-resctrl
+            - --resctrl-prefix={{ .Values.resctrl.prefix }}
             {{- end }}
           env:
             {{- if eq .Values.storage.type "s3" }}

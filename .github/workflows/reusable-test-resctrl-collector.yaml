@@ -200,7 +200,7 @@ jobs:
           PREFIX="${{ steps.gen.outputs.prefix }}"
           echo "Using local prefix: ${{ steps.gen.outputs.prefix }}"
           echo "Running collector for 30 seconds..."
-          sudo -E ./collector -d 30 --enable-resctrl --storage-type local --prefix "$PREFIX" --verbose
+          sudo -E ./collector -d 30 --enable-resctrl --storage-type local --resctrl-prefix "$PREFIX" --verbose
 
       - name: Verify occupancy parquet
         run: |

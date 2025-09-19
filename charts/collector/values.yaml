@@ -62,6 +62,8 @@ resctrl:
   samplingInterval: "1s"
   # Path where resctrl is mounted on the host
   mountpoint: "/sys/fs/resctrl"
+  # Distinct object/file prefix for resctrl parquet outputs
+  prefix: "resctrl-occupancy-"
 
 # Storage configuration
 storage:

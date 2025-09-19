@@ -307,7 +307,8 @@ async fn main() -> Result<()> {
         // Spawn the resctrl-collector loop with config from env
         let rcfg = resctrl_collector::ResctrlCollectorConfig::from_env();
         // Create writer and channels for occupancy using parsed config
-        let occ_prefix = format!("{}{}{}", opts.prefix, node_id, opts.resctrl_prefix);
+        // Use a separate prefix for resctrl outputs to avoid mixing files
+        let occ_prefix = format!("{}{}", opts.resctrl_prefix, node_id);
         let occ_config = ParquetWriterConfig {
             storage_prefix: occ_prefix,
             buffer_size: opts.parquet_buffer_size,
