@@ -280,7 +280,7 @@ mod tests {
             ("task.with.dots", "task.with.dots completed successfully"),
         ];
 
-        for (task_name, _expected_message) in test_cases.iter() {
+        for &(task_name, _expected_message) in test_cases.iter() {
             let token = CancellationToken::new();
             let future = async { Ok::<(), TestError>(()) };
 
@@ -339,4 +339,3 @@ mod tests {
         });
     }
 }
-
